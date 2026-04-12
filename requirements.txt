@@ -1,0 +1,5 @@
+pyserial==3.5
+pyvisa==1.14.1
+numpy==2.0.2
+picosdk==1.1
+typing-extensions==4.15.0
