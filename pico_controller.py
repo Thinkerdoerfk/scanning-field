@@ -1,235 +1,260 @@
-import ctypes
-import time
+# pico_controller.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Optional, Dict, Any
+
 import numpy as np
-
-from picosdk.ps5000a import ps5000a as ps
-from picosdk.functions import adc2mV, assert_pico_ok
+import pypicosdk as psdk
 
 
-class PicoScope5442D:
+@dataclass
+class PicoCaptureResult:
+    time_s: np.ndarray
+    signal_v: np.ndarray
+    meta: Dict[str, Any]
+
+
+class PicoController:
+    """
+    Minimal PicoScope 5442D controller using pyPicoSDK / ps5000a backend.
+
+    Current target:
+    - single-channel test capture on Channel A
+    - block capture
+    - return waveform for GUI display
+    """
+
     def __init__(self):
-        self.chandle = ctypes.c_int16()
-        self.status = {}
-
-        self.connected = False
-        self.max_adc = ctypes.c_int16()
-
-        self.channel = "A"
-        self.channel_enum = ps.PS5000A_CHANNEL["PS5000A_CHANNEL_A"]
-        self.range_name = "PS5000A_5V"
-        self.range_enum = ps.PS5000A_RANGE[self.range_name]
-        self.coupling_enum = ps.PS5000A_COUPLING["PS5000A_DC"]
-
-        self.trigger_enabled = True
-        self.trigger_threshold_mv = 500
-        self.trigger_direction = ps.PS5000A_THRESHOLD_DIRECTION["PS5000A_RISING"]
-        self.trigger_delay = 0
-        self.auto_trigger_ms = 1000
-
-        self.pre_trigger_samples = 500
-        self.post_trigger_samples = 1500
-        self.timebase = 4
-
-        self.buffer_max = None
-        self.buffer_min = None
-        self.time_interval_ns = None
+        self.scope = None
+        self.channel_name = "A"
+        self.channel_range = "mV100"
+        self.coupling = "DC"
+        self.last_result: Optional[PicoCaptureResult] = None
 
     def connect(self):
-        resolution = ps.PS5000A_DEVICE_RESOLUTION["PS5000A_DR_8BIT"]
+        if self.scope is not None:
+            return
 
-        self.status["openunit"] = ps.ps5000aOpenUnit(
-            ctypes.byref(self.chandle),
-            None,
-            resolution
-        )
-        assert_pico_ok(self.status["openunit"])
+        self.scope = psdk.ps5000a()
+        self.scope.open_unit()
 
-        self.status["maximumValue"] = ps.ps5000aMaximumValue(
-            self.chandle,
-            ctypes.byref(self.max_adc)
-        )
-        assert_pico_ok(self.status["maximumValue"])
+    def is_connected(self) -> bool:
+        return self.scope is not None
 
-        self.connected = True
-        return "PicoScope 5442D connected"
+    def identify(self) -> str:
+        if self.scope is None:
+            raise RuntimeError("PicoScope not connected")
+        try:
+            return str(self.scope.get_unit_serial())
+        except Exception:
+            return "Connected (serial unavailable)"
 
     def close(self):
-        if self.connected:
-            self.status["close"] = ps.ps5000aCloseUnit(self.chandle)
-            self.connected = False
+        if self.scope is not None:
+            try:
+                self.scope.close_unit()
+            finally:
+                self.scope = None
+
+    def _require_scope(self):
+        if self.scope is None:
+            raise RuntimeError("PicoScope not connected")
+
+    def _normalize_channel_name(self, channel: str) -> str:
+        ch = channel.strip().lower()
+        mapping = {
+            "a": "channel_a",
+            "b": "channel_b",
+            "c": "channel_c",
+            "d": "channel_d",
+            "channel_a": "channel_a",
+            "channel_b": "channel_b",
+            "channel_c": "channel_c",
+            "channel_d": "channel_d",
+        }
+        if ch not in mapping:
+            raise ValueError(
+                f"Unsupported channel: {channel}. Use A/B/C/D or channel_a/channel_b/channel_c/channel_d"
+            )
+        return mapping[ch]
+
+    def _normalize_range_name(self, vrange: str) -> str:
+        """
+        Convert user-friendly forms to pyPicoSDK RANGE names.
+
+        Accepted user inputs:
+            10mV, 20mV, 50mV, 100mV, 200mV, 500mV
+            1V, 2V, 5V, 10V, 20V
+        Converted to:
+            mV10, mV20, mV50, mV100, mV200, mV500
+            V1, V2, V5, V10, V20
+        """
+        s = vrange.strip()
+        key = s.lower()
+
+        mapping = {
+            "10mv": "mV10",
+            "20mv": "mV20",
+            "50mv": "mV50",
+            "100mv": "mV100",
+            "200mv": "mV200",
+            "500mv": "mV500",
+            "1v": "V1",
+            "2v": "V2",
+            "5v": "V5",
+            "10v": "V10",
+            "20v": "V20",
+            # already-correct enum-like names
+            "mv10": "mV10",
+            "mv20": "mV20",
+            "mv50": "mV50",
+            "mv100": "mV100",
+            "mv200": "mV200",
+            "mv500": "mV500",
+            "v1": "V1",
+            "v2": "V2",
+            "v5": "V5",
+            "v10": "V10",
+            "v20": "V20",
+        }
+
+        if key in mapping:
+            return mapping[key]
+
+        raise ValueError(
+            f"Unsupported range: {vrange}. "
+            f"Use one of: 10mV, 20mV, 50mV, 100mV, 200mV, 500mV, 1V, 2V, 5V, 10V, 20V"
+        )
+
+    def _get_range_enum(self, range_name: str):
+        """
+        Turn a normalized range name like 'mV100' or 'V1' into psdk.RANGE.<name>.
+        """
+        if hasattr(psdk, "RANGE") and hasattr(psdk.RANGE, range_name):
+            return getattr(psdk.RANGE, range_name)
+        raise ValueError(f"pyPicoSDK RANGE enum not found for: {range_name}")
+
+    def _normalize_coupling(self, coupling: str):
+        name = coupling.strip().upper()
+
+        candidates = [name, f"AC_{name}" if name in ("AC", "DC") else name]
+        for cand in candidates:
+            if hasattr(psdk.COUPLING, cand):
+                return getattr(psdk.COUPLING, cand)
+
+        if name == "DC" and hasattr(psdk.COUPLING, "DC"):
+            return getattr(psdk.COUPLING, "DC")
+        if name == "AC" and hasattr(psdk.COUPLING, "AC"):
+            return getattr(psdk.COUPLING, "AC")
+
+        raise ValueError(f"Unsupported coupling: {coupling}")
 
     def configure_channel(
         self,
-        channel="A",
-        vrange="PS5000A_5V",
-        coupling="PS5000A_DC",
-        offset_v=0.0,
-        enabled=True
+        channel: str = "A",
+        vrange: str = "100mV",
+        coupling: str = "DC",
+        offset: float = 0.0,
+        probe_scale: float = 1.0,
     ):
-        if not self.connected:
-            raise RuntimeError("PicoScope not connected")
+        self._require_scope()
 
-        channel_map = {
-            "A": "PS5000A_CHANNEL_A",
-            "B": "PS5000A_CHANNEL_B",
-            "C": "PS5000A_CHANNEL_C",
-            "D": "PS5000A_CHANNEL_D",
-        }
+        sdk_channel = self._normalize_channel_name(channel)
+        sdk_range_name = self._normalize_range_name(vrange)
+        sdk_range = self._get_range_enum(sdk_range_name)
 
-        self.channel = channel
-        self.channel_enum = ps.PS5000A_CHANNEL[channel_map[channel]]
-        self.range_name = vrange
-        self.range_enum = ps.PS5000A_RANGE[vrange]
-        self.coupling_enum = ps.PS5000A_COUPLING[coupling]
+        self.channel_name = channel
+        self.channel_range = sdk_range_name
+        self.coupling = coupling
 
-        self.status[f"setCh{channel}"] = ps.ps5000aSetChannel(
-            self.chandle,
-            self.channel_enum,
-            int(enabled),
-            self.coupling_enum,
-            self.range_enum,
-            ctypes.c_float(offset_v)
+        self.scope.set_all_channels_off()
+
+        self.scope.set_channel(
+            channel=sdk_channel,
+            range=sdk_range,
+            enabled=True,
+            coupling=self._normalize_coupling(coupling),
+            offset=offset,
+            probe_scale=probe_scale,
         )
-        assert_pico_ok(self.status[f"setCh{channel}"])
 
-    def configure_trigger(
+    def capture_block(
         self,
-        threshold_mv=500,
-        direction="RISING",
-        auto_trigger_ms=1000,
-        enabled=True
-    ):
-        if not self.connected:
-            raise RuntimeError("PicoScope not connected")
+        channel: str = "A",
+        vrange: str = "100mV",
+        coupling: str = "DC",
+        timebase: int = 3,
+        samples: int = 5000,
+        pre_trigger_percent: int = 20,
+        trigger_threshold_mv: float = 0.0,
+        auto_trigger_us: int = 1000,
+    ) -> PicoCaptureResult:
+        self._require_scope()
 
-        self.trigger_enabled = enabled
-        self.trigger_threshold_mv = threshold_mv
-        self.auto_trigger_ms = auto_trigger_ms
+        sdk_channel = self._normalize_channel_name(channel)
+        sdk_range_name = self._normalize_range_name(vrange)
 
-        direction_map = {
-            "RISING": "PS5000A_RISING",
-            "FALLING": "PS5000A_FALLING",
-        }
-        self.trigger_direction = ps.PS5000A_THRESHOLD_DIRECTION[direction_map[direction]]
-
-        # 这里先按模拟通道触发骨架写。
-        # 你后面如果走真正 EXT 口触发，需要再切到 EXT 对应枚举和阈值。
-        threshold_adc = int(threshold_mv * self.max_adc.value / 5000)
-
-        self.status["trigger"] = ps.ps5000aSetSimpleTrigger(
-            self.chandle,
-            int(enabled),
-            self.channel_enum,
-            threshold_adc,
-            self.trigger_direction,
-            self.trigger_delay,
-            self.auto_trigger_ms
+        self.configure_channel(
+            channel=channel,
+            vrange=sdk_range_name,
+            coupling=coupling,
         )
-        assert_pico_ok(self.status["trigger"])
 
-    def configure_block(
-        self,
-        pre_trigger_samples=500,
-        post_trigger_samples=1500,
-        timebase=4
-    ):
-        if not self.connected:
-            raise RuntimeError("PicoScope not connected")
-
-        self.pre_trigger_samples = pre_trigger_samples
-        self.post_trigger_samples = post_trigger_samples
-        self.timebase = timebase
-
-        total_samples = pre_trigger_samples + post_trigger_samples
-
-        self.buffer_max = (ctypes.c_int16 * total_samples)()
-        self.buffer_min = (ctypes.c_int16 * total_samples)()
-
-        segment_index = 0
-
-        self.status["setDataBuffers"] = ps.ps5000aSetDataBuffers(
-            self.chandle,
-            self.channel_enum,
-            ctypes.byref(self.buffer_max),
-            ctypes.byref(self.buffer_min),
-            total_samples,
-            segment_index,
-            ps.PS5000A_RATIO_MODE["PS5000A_RATIO_MODE_NONE"]
+        self.scope.set_simple_trigger(
+            channel=sdk_channel,
+            threshold=float(trigger_threshold_mv),
+            threshold_unit="mv",
+            enable=True,
+            direction=psdk.TRIGGER_DIR.RISING,
+            delay=0,
+            auto_trigger=int(auto_trigger_us),
         )
-        assert_pico_ok(self.status["setDataBuffers"])
 
-        time_interval_ns = ctypes.c_float()
-        returned_max_samples = ctypes.c_int32()
-
-        self.status["getTimebase2"] = ps.ps5000aGetTimebase2(
-            self.chandle,
-            self.timebase,
-            total_samples,
-            ctypes.byref(time_interval_ns),
-            ctypes.byref(returned_max_samples),
-            0
+        buffers, time_axis = self.scope.run_simple_block_capture(
+            timebase=int(timebase),
+            samples=int(samples),
+            output_unit="v",
+            time_unit="ns",
+            pre_trig_percent=int(pre_trigger_percent),
         )
-        assert_pico_ok(self.status["getTimebase2"])
 
-        self.time_interval_ns = time_interval_ns.value
+        signal = None
 
-    def arm(self):
-        if not self.connected:
-            raise RuntimeError("PicoScope not connected")
+        if sdk_channel in buffers:
+            signal = buffers[sdk_channel]
 
-        time_indisposed_ms = ctypes.c_int32()
+        if signal is None:
+            for key, value in buffers.items():
+                if str(key).strip().lower() == sdk_channel.lower():
+                    signal = value
+                    break
 
-        self.status["runBlock"] = ps.ps5000aRunBlock(
-            self.chandle,
-            self.pre_trigger_samples,
-            self.post_trigger_samples,
-            self.timebase,
-            ctypes.byref(time_indisposed_ms),
-            0,
-            None,
-            None
+        if signal is None:
+            first_key = next(iter(buffers.keys()))
+            signal = buffers[first_key]
+
+        time_s = np.asarray(time_axis, dtype=float) * 1e-9
+        signal_v = np.asarray(signal, dtype=float)
+
+        result = PicoCaptureResult(
+            time_s=time_s,
+            signal_v=signal_v,
+            meta={
+                "channel": channel,
+                "sdk_channel": sdk_channel,
+                "range": sdk_range_name,
+                "coupling": coupling,
+                "timebase": int(timebase),
+                "samples": int(samples),
+                "pre_trigger_percent": int(pre_trigger_percent),
+                "trigger_threshold_mv": float(trigger_threshold_mv),
+                "auto_trigger_us": int(auto_trigger_us),
+            },
         )
-        assert_pico_ok(self.status["runBlock"])
 
-    def wait_until_ready(self, timeout=5.0, poll_interval=0.01):
-        if not self.connected:
-            raise RuntimeError("PicoScope not connected")
+        self.last_result = result
+        return result
 
-        ready = ctypes.c_int16(0)
-        t0 = time.time()
-
-        while ready.value == 0:
-            self.status["isReady"] = ps.ps5000aIsReady(
-                self.chandle,
-                ctypes.byref(ready)
-            )
-
-            if time.time() - t0 > timeout:
-                raise TimeoutError("PicoScope acquisition timeout")
-
-            time.sleep(poll_interval)
-
-    def read_data(self):
-        if not self.connected:
-            raise RuntimeError("PicoScope not connected")
-
-        total_samples = self.pre_trigger_samples + self.post_trigger_samples
-        c_total_samples = ctypes.c_int32(total_samples)
-        overflow = ctypes.c_int16()
-
-        self.status["getValues"] = ps.ps5000aGetValues(
-            self.chandle,
-            0,
-            ctypes.byref(c_total_samples),
-            1,
-            ps.PS5000A_RATIO_MODE["PS5000A_RATIO_MODE_NONE"],
-            0,
-            ctypes.byref(overflow)
-        )
-        assert_pico_ok(self.status["getValues"])
-
-        data_mv = adc2mV(self.buffer_max, self.range_enum, self.max_adc)
-        data_mv = np.array(data_mv[:c_total_samples.value], dtype=np.float64)
-
-        t = np.arange(c_total_samples.value) * self.time_interval_ns * 1e-9
-        return t, data_mv
+    def get_last_result(self) -> Optional[PicoCaptureResult]:
+        return self.last_result
