@@ -264,20 +264,11 @@ class PicoController:
             probe_scale=1.0,
         )
 
-        # trigger source
         # trigger setup
         if self.trigger_source == "EXT":
-            self.scope.set_advanced_trigger(
-                channel=psdk.CHANNEL.EXTERNAL,
-                state=psdk.TRIGGER_STATE.TRUE,
-                direction=self._normalize_trigger_direction(self.trigger_direction),
-                threshold_mode=0,  # 先用最简单默认值，若后面不兼容再查
-                threshold_upper_mv=float(self.trigger_threshold_mv),
-                threshold_lower_mv=float(self.trigger_threshold_mv),
-                hysteresis_upper_mv=0.0,
-                hysteresis_lower_mv=0.0,
-                auto_trigger_ms=int(self.auto_trigger_us / 1000),
-                action=3,
+            raise RuntimeError(
+                "EXT trigger is temporarily not supported in this project. "
+                "Please use A/B/C/D as trigger source."
             )
 
         elif self.trigger_source in ("A", "B", "C", "D"):
@@ -293,7 +284,7 @@ class PicoController:
             )
 
         else:
-            raise ValueError("Trigger source must be EXT or A/B/C/D")
+            raise ValueError("Trigger source must be A/B/C/D")
 
         # total acquisition window
         self.total_window_us = self.duration_us
