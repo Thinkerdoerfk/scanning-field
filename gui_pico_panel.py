@@ -197,7 +197,7 @@ class PicoPanel:
                 coupling=self.coupling_var.get().strip(),
                 sample_rate_mhz=float(self.sample_rate_var.get().strip()),
                 duration_us=post_us,
-                delay_us=pre_us,
+                pre_trigger_us=pre_us,
                 trigger_source=self.trigger_source_var.get().strip(),
                 trigger_direction=self.trigger_direction_var.get().strip(),
                 trigger_threshold_mv=float(self.trigger_var.get().strip()),

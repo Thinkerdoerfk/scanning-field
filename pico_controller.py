@@ -134,31 +134,20 @@ class PicoController:
             raise ValueError("Unsupported channel. Use A/B/C/D or EXT.")
         return mapping[ch]
 
-    def _normalize_range_name(self, vrange: str) -> str:
-        s = vrange.strip().lower()
+    def _normalize_range_enum(self, vrange: str):
+        s = vrange.strip()
         mapping = {
-            "10mv": "mV10",
-            "20mv": "mV20",
-            "50mv": "mV50",
-            "100mv": "mV100",
-            "200mv": "mV200",
-            "500mv": "mV500",
-            "1v": "V1",
-            "2v": "V2",
-            "5v": "V5",
-            "10v": "V10",
-            "20v": "V20",
-            "mv10": "mV10",
-            "mv20": "mV20",
-            "mv50": "mV50",
-            "mv100": "mV100",
-            "mv200": "mV200",
-            "mv500": "mV500",
-            "v1": "V1",
-            "v2": "V2",
-            "v5": "V5",
-            "v10": "V10",
-            "v20": "V20",
+            "10mV": psdk.RANGE.mV10,
+            "20mV": psdk.RANGE.mV20,
+            "50mV": psdk.RANGE.mV50,
+            "100mV": psdk.RANGE.mV100,
+            "200mV": psdk.RANGE.mV200,
+            "500mV": psdk.RANGE.mV500,
+            "1V": psdk.RANGE.V1,
+            "2V": psdk.RANGE.V2,
+            "5V": psdk.RANGE.V5,
+            "10V": psdk.RANGE.V10,
+            "20V": psdk.RANGE.V20,
         }
         if s not in mapping:
             raise ValueError(
@@ -262,7 +251,7 @@ class PicoController:
         self.auto_trigger_us = auto_trigger_us
 
         recv_channel_name = self._normalize_channel_name(self.recv_channel)
-        recv_range_name = self._normalize_range_name(self.vrange)
+        recv_range_name = self._normalize_range_enum(self.vrange)
 
         # channel setup
         self.scope.set_all_channels_off()
@@ -276,22 +265,35 @@ class PicoController:
         )
 
         # trigger source
+        # trigger setup
         if self.trigger_source == "EXT":
-            trigger_channel = "external"
+            self.scope.set_advanced_trigger(
+                channel=psdk.CHANNEL.EXTERNAL,
+                state=psdk.TRIGGER_STATE.TRUE,
+                direction=self._normalize_trigger_direction(self.trigger_direction),
+                threshold_mode=0,  # 先用最简单默认值，若后面不兼容再查
+                threshold_upper_mv=float(self.trigger_threshold_mv),
+                threshold_lower_mv=float(self.trigger_threshold_mv),
+                hysteresis_upper_mv=0.0,
+                hysteresis_lower_mv=0.0,
+                auto_trigger_ms=int(self.auto_trigger_us / 1000),
+                action=3,
+            )
+
         elif self.trigger_source in ("A", "B", "C", "D"):
             trigger_channel = self._normalize_channel_name(self.trigger_source)
+            self.scope.set_simple_trigger(
+                channel=trigger_channel,
+                threshold=float(self.trigger_threshold_mv),
+                threshold_unit="mv",
+                enable=True,
+                direction=self._normalize_trigger_direction(self.trigger_direction),
+                delay=0,
+                auto_trigger=int(self.auto_trigger_us),
+            )
+
         else:
             raise ValueError("Trigger source must be EXT or A/B/C/D")
-
-        self.scope.set_simple_trigger(
-            channel=trigger_channel,
-            threshold=float(self.trigger_threshold_mv),
-            threshold_unit="mv",
-            enable=True,
-            direction=self._normalize_trigger_direction(self.trigger_direction),
-            delay=0,
-            auto_trigger=int(self.auto_trigger_us),
-        )
 
         # total acquisition window
         self.total_window_us = self.duration_us
