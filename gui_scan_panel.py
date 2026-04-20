@@ -13,6 +13,7 @@ class ScanPanel:
 
         self.scan_controller = None
         self.scan_thread = None
+        self.test_scan_thread = None
 
         self.frame = ttk.LabelFrame(parent, text="Scan Panel", padding=10)
         self.frame.pack(fill="x", padx=5, pady=8)
@@ -37,6 +38,7 @@ class ScanPanel:
     # UI
     # ============================================================
     def _build_ui(self):
+        # row number of buttons
         row = 0
 
         ttk.Label(self.frame, text="X Start (mm)").grid(
@@ -59,6 +61,18 @@ class ScanPanel:
         ttk.Entry(self.frame, textvariable=self.x_step_var, width=10).grid(
             row=row, column=5, padx=4, pady=4
         )
+
+        test_frame = ttk.LabelFrame(self.frame, text="Test Scan Corner")
+        test_frame.grid(row=0, column=6, rowspan=4, padx=(12, 4), pady=4, sticky="n")
+
+        ttk.Button(test_frame, text="LT", width=6,
+                   command=lambda: self.test_scan_corner("LT")).grid(row=0, column=0, padx=3, pady=3)
+        ttk.Button(test_frame, text="RT", width=6,
+                   command=lambda: self.test_scan_corner("RT")).grid(row=0, column=1, padx=3, pady=3)
+        ttk.Button(test_frame, text="LD", width=6,
+                   command=lambda: self.test_scan_corner("LD")).grid(row=1, column=0, padx=3, pady=3)
+        ttk.Button(test_frame, text="RD", width=6,
+                   command=lambda: self.test_scan_corner("RD")).grid(row=1, column=1, padx=3, pady=3)
 
         row += 1
 
@@ -131,6 +145,87 @@ class ScanPanel:
     # ============================================================
     # Actions
     # ============================================================
+    # ===========================================================
+    # Test scan corner position
+    # ===========================================================
+    def test_scan_corner(self, corner: str):
+        try:
+            if self.ctx.stage is None or not self.ctx.stage.is_connected():
+                raise RuntimeError("Stage is not connected.")
+
+            stage = self.ctx.stage
+
+            x_start = self._get_float(self.x_start_var, "X Start")
+            x_stop = self._get_float(self.x_stop_var, "X Stop")
+            y_start = self._get_float(self.y_start_var, "Y Start")
+            y_stop = self._get_float(self.y_stop_var, "Y Stop")
+
+            if x_stop < x_start:
+                raise ValueError("X Stop must be >= X Start.")
+            if y_stop < y_start:
+                raise ValueError("Y Stop must be >= Y Start.")
+
+            # Make sure software/display coordinates are valid
+            pos = stage.get_position_mm()
+            current_x = pos["axis1"]
+            current_y = pos["axis2"]
+
+            if current_x is None or current_y is None:
+                raise RuntimeError(
+                    "Stage software position is not initialized. "
+                    "Please do Home+ & Set Zero for both axes first."
+                )
+
+            # Decide target corner
+            if corner == "LD":
+                target_x = x_start
+                target_y = y_start
+            elif corner == "RD":
+                target_x = x_stop
+                target_y = y_start
+            elif corner == "LT":
+                target_x = x_start
+                target_y = y_stop
+            elif corner == "RT":
+                target_x = x_stop
+                target_y = y_stop
+            else:
+                raise ValueError(f"Unknown corner: {corner}")
+
+            dx = target_x - current_x
+            dy = target_y - current_y
+
+            self.log(
+                f"Test scan corner -> {corner}: "
+                f"current=({current_x:.3f}, {current_y:.3f}) mm, "
+                f"target=({target_x:.3f}, {target_y:.3f}) mm, "
+                f"move=(dx={dx:.3f}, dy={dy:.3f}) mm"
+            )
+
+            # Move X first, then Y
+            if abs(dx) > 1e-9:
+                stage.move_rel_mm(1, dx)
+                stage.wait_until_stop()
+
+            if abs(dy) > 1e-9:
+                stage.move_rel_mm(2, dy)
+                stage.wait_until_stop()
+
+            # Read updated software/display coordinates
+            new_pos = stage.get_position_mm()
+            self.log(
+                f"Arrived at {corner}: "
+                f"stage position = ({new_pos['axis1']:.3f}, {new_pos['axis2']:.3f}) mm"
+            )
+
+        except Exception as e:
+            self.log(f"Test scan failed: {e}")
+            try:
+                messagebox.showerror("Test Error", str(e))
+            except Exception:
+                pass
+
+    # Do the scan
     def start_scan(self):
         try:
             if self.ctx.stage is None:

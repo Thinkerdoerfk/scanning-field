@@ -9,7 +9,7 @@ class AFGController:
     Tektronix AFG3022B controller
 
     Notes:
-    - This version does NOT automatically switch trigger source to BUS.
+    - This version automatically switch trigger source to External.
     - Trigger source must be selected manually by GUI or explicit method calls.
     """
 

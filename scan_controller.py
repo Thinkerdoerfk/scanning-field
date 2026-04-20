@@ -52,14 +52,72 @@ class ScanController:
     # ============================================================
     # Basic actions
     # ============================================================
-    def trigger_here(self, dwell_s: float = 0.0, verbose: bool = True):
+    def trigger_here(
+            self,
+            point_index: int,
+            x_mm: float,
+            y_mm: float,
+            dwell_s: float = 0.0,
+            verbose: bool = True,
+    ) -> None:
+        """
+        At current scan point:
+            1. arm Pico (already configured in PicoPanel)
+            2. optionally wait dwell_s
+            3. fire AFG software trigger once
+            4. wait Pico capture complete
+            5. save waveform to NPZ
+            6. publish latest waveform to ctx for PicoPanel auto-refresh
+        """
+        pico = self.ctx.pico
+        afg = self.ctx.afg
+
+        if pico is None:
+            raise RuntimeError("Pico controller is not available")
+        if afg is None:
+            raise RuntimeError("AFG controller is not available")
+
+        if not pico.is_connected():
+            raise RuntimeError("Pico is not connected")
+        if not pico.is_configured():
+            raise RuntimeError("Pico is not configured in Pico panel")
+
+        if verbose:
+            self.log(
+                f"[SCAN] Point #{point_index}: arm Pico at x={x_mm:.3f} mm, y={y_mm:.3f} mm"
+            )
+
+        # 1. Pico enters waiting-for-trigger state
+        pico.arm_current_capture()
+
+        # 2. optional wait
         if dwell_s > 0:
             time.sleep(dwell_s)
 
+        # 3. fire AFG
         if verbose:
-            self.log("Trigger AFG once.")
+            self.log("[SCAN] Trigger AFG once.")
+        afg.fire_software_trigger_once()
 
-        self.afg.fire_software_trigger_once()
+        # 4. wait and fetch waveform
+        result = pico.wait_and_fetch_current_capture()
+
+        # 5. save waveform
+        save_path = pico.save_capture_npz(
+            result=result,
+            point_index=point_index,
+            x_mm=x_mm,
+            y_mm=y_mm,
+        )
+
+        # 6. publish latest waveform to shared context
+        self.ctx.last_pico_time = result.time_s
+        self.ctx.last_pico_signal = result.signal_v
+        self.ctx.last_pico_meta = result.meta
+        self.ctx.last_pico_update_id = getattr(self.ctx, "last_pico_update_id", 0) + 1
+
+        if verbose:
+            self.log(f"[SCAN] Pico saved: {save_path}")
 
     def move_x_rel(self, dx_mm: float, verbose: bool = True):
         if abs(dx_mm) <= 1e-12:
@@ -132,50 +190,64 @@ class ScanController:
 
             current_x = float(x_start)
             current_y = float(y_start)
-
+            point_index = 1# number of points
             for j, y in enumerate(ys):
                 if self._stop_requested:
                     self.log("Scan stopped by user.")
                     return
 
-                self.log(f"===== Row {j + 1}/{len(ys)} : y = {y:.3f} mm =====")
-
+                # If current row is not the first row, move one step in y direction
                 if j > 0:
                     dy = float(y - current_y)
-                    self.move_y_rel(dy, verbose=verbose)
+                    self.move_y_rel(dy, verbose=verbose)# Also controls the software pos display
                     current_y = float(y)
+                self.log(f"===== Row {j + 1}/{len(ys)} : y = {current_y:.3f} mm =====")
 
                 if abs(current_x - x_start) > 1e-12:
                     dx_back = float(x_start - current_x)
-                    self.log("Return X to row start.")
-                    self.move_x_rel(dx_back, verbose=verbose)
+                    self.move_x_rel(dx_back, verbose=verbose)# Also controls the software pos display
                     current_x = float(x_start)
 
-                for i, x in enumerate(xs):
+                for i in range(len(xs)):
                     if self._stop_requested:
                         self.log("Scan stopped by user.")
                         return
 
-                    self.log(f"=== Point: x={x:.3f} mm, y={current_y:.3f} mm ===")
+                    self.log(f"=== Point: x={current_x:.3f} mm, y={current_y:.3f} mm ===")
+                    self.trigger_here(
+                        point_index=point_index,
+                        x_mm=current_x,
+                        y_mm=current_y,
+                        dwell_s=dwell_s,
+                        verbose=verbose,
+                    )
+                    point_index += 1
 
-                    if j == 0 and i == 0 and first_without_move:
-                        self.log("First point: acquire before moving.")
-                        self.trigger_here(dwell_s=dwell_s, verbose=verbose)
-                        continue
-
-                    dx = float(x - current_x)
-                    self.move_x_rel(dx, verbose=verbose)
-                    current_x = float(x)
-
-                    self.trigger_here(dwell_s=dwell_s, verbose=verbose)
+                    if i < len(xs) - 1:
+                        next_x = float(xs[i + 1])
+                        dx = next_x - current_x
+                        self.move_x_rel(dx, verbose=verbose)
+                        current_x = next_x
 
                 if j < len(ys) - 1:
                     dx_return = float(x_start - current_x)
                     self.log("Row finished. Return X to start.")
                     self.move_x_rel(dx_return, verbose=verbose)
                     current_x = float(x_start)
+# Return to the starting point after scan finished
+            self.log("Scan finished. Returning to scan start point.")
 
-            self.log("Scan finished successfully.")
+            if abs(current_x - x_start) > 1e-12:
+                dx_back_home = float(x_start - current_x)
+                self.move_x_rel(dx_back_home, verbose=verbose)
+                current_x = float(x_start)
+
+            if abs(current_y - y_start) > 1e-12:
+                dy_back_home = float(y_start - current_y)
+                self.move_y_rel(dy_back_home, verbose=verbose)
+                current_y = float(y_start)
+
+            self.log("Scan finished successfully. Returned to start point.")
 
         finally:
             self._is_running = False

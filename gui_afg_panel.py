@@ -28,6 +28,7 @@ class AFGPanel:
         self._build()
 
     def _build(self):
+        # r is the row number of these buttons
         r = 0
 
         ttk.Label(self.frame, text="Resource").grid(row=r, column=0, sticky="w", padx=4, pady=3)

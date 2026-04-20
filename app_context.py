@@ -14,3 +14,7 @@ class AppContext:
         self.last_pico_time = None
         self.last_pico_signal = None
         self.last_pico_meta = None
+
+        # software-tracked stage position in mm
+        self.stage_x_mm = None
+        self.stage_y_mm = None

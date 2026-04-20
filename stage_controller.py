@@ -246,7 +246,7 @@ class GSC02CStage:
     def wait_until_stop(
         self,
         poll_interval: float = 0.05,
-        timeout: float = 30.0,
+        timeout: float = 60.0,
         verbose: bool = False,
     ):
         t0 = time.time()
@@ -259,7 +259,7 @@ class GSC02CStage:
 
             if status.strip().endswith("R"):
                 return status
-
+            # If waiting time is out, then return
             if time.time() - t0 > timeout:
                 raise TimeoutError(f"Timeout. Last status: {status}")
 

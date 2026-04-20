@@ -41,9 +41,10 @@ Recommended:
 ## Notes
 
 For HPS80-50X-M5:
-
+half step
 - 1 pulse = 1 um = 0.001 mm
-
+full step
+- 1 pulse = 2 um = 0.002 mm
 ## Install dependencies
 
 ```bash
