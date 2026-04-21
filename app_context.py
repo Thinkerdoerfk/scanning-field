@@ -12,8 +12,9 @@ class AppContext:
         self.scan_stop_requested = False
 
         self.last_pico_time = None
-        self.last_pico_signal = None
+        self.last_pico_signals = None
         self.last_pico_meta = None
+        self.last_pico_update_id = 1
 
         # software-tracked stage position in mm
         self.stage_x_mm = None

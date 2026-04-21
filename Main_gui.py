@@ -45,6 +45,7 @@ class MainGUIApp:
         self.pico_panel = PicoPanel(right, self.ctx, self.log_panel.log)
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
+
     def on_close(self):
         try:
             if self.ctx.afg is not None:
