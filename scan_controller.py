@@ -20,9 +20,11 @@ class ScanController:
         - trigger AFG once at each point
     """
 
-    def __init__(self, stage, afg, log_func=None):
+    def __init__(self, ctx, stage, afg, pico, log_func=None):
+        self.ctx = ctx
         self.stage = stage
         self.afg = afg
+        self.pico = pico
         self.log_func = log_func
 
         self._stop_requested = False
@@ -96,7 +98,7 @@ class ScanController:
 
         # 3. fire AFG
         if verbose:
-            self.log("[SCAN] Trigger AFG once.")
+            self.log("[SCAN] Fire AFG software trigger once.")
         afg.fire_software_trigger_once()
 
         # 4. wait and fetch waveform
@@ -112,7 +114,7 @@ class ScanController:
 
         # 6. publish latest waveform to shared context
         self.ctx.last_pico_time = result.time_s
-        self.ctx.last_pico_signal = result.signal_v
+        self.ctx.last_pico_signals = result.signals_v
         self.ctx.last_pico_meta = result.meta
         self.ctx.last_pico_update_id = getattr(self.ctx, "last_pico_update_id", 0) + 1
 
@@ -147,7 +149,6 @@ class ScanController:
         y_stop: float,
         y_step: float,
         dwell_s: float = 0.0,
-        first_without_move: bool = True,
         verbose: bool = True,
     ):
         """
@@ -191,6 +192,7 @@ class ScanController:
             current_x = float(x_start)
             current_y = float(y_start)
             point_index = 1# number of points
+
             for j, y in enumerate(ys):
                 if self._stop_requested:
                     self.log("Scan stopped by user.")
@@ -210,10 +212,10 @@ class ScanController:
 
                 for i in range(len(xs)):
                     if self._stop_requested:
-                        self.log("Scan stopped by user.")
+                        self.log("[SCAN] Scan stopped by user.")
                         return
 
-                    self.log(f"=== Point: x={current_x:.3f} mm, y={current_y:.3f} mm ===")
+                    self.log(f"[SCAN] === Point: x={current_x:.3f} mm, y={current_y:.3f} mm ===")
                     self.trigger_here(
                         point_index=point_index,
                         x_mm=current_x,
@@ -229,14 +231,14 @@ class ScanController:
                         self.move_x_rel(dx, verbose=verbose)
                         current_x = next_x
 
-                if j < len(ys) - 1:
+                if j < len(ys) - 1 and abs(current_x - x_start) > 1e-12:
+                    self.log("[SCAN] Row finished. Return X to row start.")
                     dx_return = float(x_start - current_x)
-                    self.log("Row finished. Return X to start.")
                     self.move_x_rel(dx_return, verbose=verbose)
                     current_x = float(x_start)
-# Return to the starting point after scan finished
-            self.log("Scan finished. Returning to scan start point.")
 
+        # Return to the starting point after scan finished
+            self.log("[SCAN] Scan finished. Returning to global scan start point.")
             if abs(current_x - x_start) > 1e-12:
                 dx_back_home = float(x_start - current_x)
                 self.move_x_rel(dx_back_home, verbose=verbose)
@@ -247,7 +249,7 @@ class ScanController:
                 self.move_y_rel(dy_back_home, verbose=verbose)
                 current_y = float(y_start)
 
-            self.log("Scan finished successfully. Returned to start point.")
+            self.log("[SCAN] Scan finished successfully. Returned to start point.")
 
         finally:
             self._is_running = False
@@ -255,6 +257,14 @@ class ScanController:
     # ============================================================
     # Thread wrapper for GUI
     # ============================================================
+    def _thread_entry(self, **kwargs):
+        try:
+            self.raster_scan_return(**kwargs)
+        except Exception as e:
+            self.log(f"[SCAN] Scan crashed: {e}")
+            self.log(traceback.format_exc())
+            self._is_running = False
+
     def start_scan_thread(
         self,
         x_start: float,
@@ -264,14 +274,13 @@ class ScanController:
         y_stop: float,
         y_step: float,
         dwell_s: float = 0.0,
-        first_without_move: bool = True,
         verbose: bool = True,
     ):
         if self._is_running:
             raise RuntimeError("Scan is already running")
 
         self._scan_thread = threading.Thread(
-            target=self.raster_scan_return,
+            target=self._thread_entry,
             kwargs=dict(
                 x_start=x_start,
                 x_stop=x_stop,
@@ -280,7 +289,6 @@ class ScanController:
                 y_stop=y_stop,
                 y_step=y_step,
                 dwell_s=dwell_s,
-                first_without_move=first_without_move,
                 verbose=verbose,
             ),
             daemon=True,

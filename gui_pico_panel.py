@@ -1,6 +1,7 @@
 import os
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
+import threading
 
 import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -26,6 +27,9 @@ class PicoPanel(ttk.LabelFrame):
         super().__init__(parent, text="PicoScope", padding=8)
         self.ctx = ctx
         self.log = log_func if log_func is not None else print
+
+        self._capture_thread = None
+        self._capture_running = False
 
         self._build_vars()
         self._build_layout()
@@ -414,20 +418,52 @@ class PicoPanel(ttk.LabelFrame):
             messagebox.showerror("PicoScope Error", str(e))
 
     # ------------------------------------------------------------------
-    # capture
+    # capture in background thread
     # ------------------------------------------------------------------
     def capture_test(self):
+        if self._capture_running:
+            self.log("[PICO] Capture test is already running.")
+            return
+
         try:
             if self.ctx.pico is None or not self.ctx.pico.is_connected():
                 raise RuntimeError("PicoScope not connected")
             if not self.ctx.pico.is_configured():
                 raise RuntimeError("PicoScope not configured. Please click Apply Config first.")
+        except Exception as e:
+            self.log(f"[PICO] Capture failed: {e}")
+            messagebox.showerror("PicoScope Error", str(e))
+            return
+        self._capture_running = True
+        self.log("[PICO] Starting test capture in background thread...")
+
+        self._capture_thread = threading.Thread(
+            target=self._capture_test_worker,
+            daemon=True,
+        )
+        self._capture_thread.start()
+
+    def _capture_test_worker(self):
+
+        try:
+            save_dir = self.var_save_dir.get().strip()
 
             self.ctx.pico.arm_current_capture()
             self.log("[PICO] Armed. Waiting using sleep-based fetch workaround...")
 
             result = self.ctx.pico.wait_and_fetch_current_capture()
 
+            save_path = None
+            if save_dir:
+                save_path = self.ctx.pico.save_capture_npz(result, folder=save_dir)
+
+            self.after(0, lambda: self._on_capture_test_success(result, save_path))
+
+        except Exception as e:
+            self.after(0, lambda err=e: self._on_capture_test_error(err))
+
+    def _on_capture_test_success(self, result, save_path):
+        try:
             self.ctx.last_pico_time = result.time_s
             self.ctx.last_pico_signals = result.signals_v
             self.ctx.last_pico_meta = result.meta
@@ -451,14 +487,19 @@ class PicoPanel(ttk.LabelFrame):
                 f"dt={result.meta.get('dt_s')}"
             )
 
-            save_dir = self.var_save_dir.get().strip()
-            if save_dir:
-                path = self.ctx.pico.save_capture_npz(result, folder=save_dir)
-                self.log(f"[PICO] Saved: {path}")
+            if save_path:
+                self.log(f"[PICO] Saved: {save_path}")
+        finally:
+            self._capture_running = False
+            self._refresh_status()
 
-        except Exception as e:
-            self.log(f"[PICO] Capture failed: {e}")
-            messagebox.showerror("PicoScope Error", str(e))
+    def _on_capture_test_error(self, err):
+        try:
+            self.log(f"[PICO] Capture failed: {err}")
+            messagebox.showerror("PicoScope Error", str(err))
+        finally:
+            self._capture_running = False
+            self._refresh_status()
 
     # ------------------------------------------------------------------
     # status
@@ -469,7 +510,10 @@ class PicoPanel(ttk.LabelFrame):
         except Exception:
             connected = False
 
-        self.var_status.set("Connected" if connected else "Disconnected")
+        if connected and self._capture_running:
+            self.var_status.set("Connected | Capturing")
+        else:
+            self.var_status.set("Connected" if connected else "Disconnected")
 
         if connected:
             try:

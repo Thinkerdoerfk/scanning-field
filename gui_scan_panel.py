@@ -12,11 +12,11 @@ class ScanPanel:
         self.log = log_func
 
         self.scan_controller = None
-        self.scan_thread = None
-        self.test_scan_thread = None
+        #self.scan_thread = None
+        #self.test_scan_thread = None
 
-        self.frame = ttk.LabelFrame(parent, text="Scan Panel", padding=10)
-        self.frame.pack(fill="x", padx=5, pady=8)
+        self.frame = ttk.LabelFrame(parent, text="Scan", padding=6)
+        self.frame.pack(fill="x", padx=4, pady=4)
 
         # =========================
         # Variables
@@ -30,7 +30,6 @@ class ScanPanel:
         self.y_step_var = tk.StringVar(value="0.5")
 
         self.dwell_var = tk.StringVar(value="0.1")
-        self.first_without_move_var = tk.BooleanVar(value=True)
 
         self._build_ui()
 
@@ -38,100 +37,55 @@ class ScanPanel:
     # UI
     # ============================================================
     def _build_ui(self):
-        # row number of buttons
+        for c in range(7):
+            self.frame.columnconfigure(c, weight=0)
+        self.frame.columnconfigure(6, weight=1)
+
         row = 0
+        ttk.Label(self.frame, text="X0").grid(row=row, column=0, padx=2, pady=2, sticky="w")
+        ttk.Entry(self.frame, textvariable=self.x_start_var, width=7).grid(row=row, column=1, padx=2, pady=2)
+        ttk.Label(self.frame, text="X1").grid(row=row, column=2, padx=2, pady=2, sticky="w")
+        ttk.Entry(self.frame, textvariable=self.x_stop_var, width=7).grid(row=row, column=3, padx=2, pady=2)
+        ttk.Label(self.frame, text="dX").grid(row=row, column=4, padx=2, pady=2, sticky="w")
+        ttk.Entry(self.frame, textvariable=self.x_step_var, width=7).grid(row=row, column=5, padx=2, pady=2)
 
-        ttk.Label(self.frame, text="X Start (mm)").grid(
-            row=row, column=0, padx=4, pady=4, sticky="w"
-        )
-        ttk.Entry(self.frame, textvariable=self.x_start_var, width=10).grid(
-            row=row, column=1, padx=4, pady=4
-        )
-
-        ttk.Label(self.frame, text="X Stop (mm)").grid(
-            row=row, column=2, padx=4, pady=4, sticky="w"
-        )
-        ttk.Entry(self.frame, textvariable=self.x_stop_var, width=10).grid(
-            row=row, column=3, padx=4, pady=4
-        )
-
-        ttk.Label(self.frame, text="X Step (mm)").grid(
-            row=row, column=4, padx=4, pady=4, sticky="w"
-        )
-        ttk.Entry(self.frame, textvariable=self.x_step_var, width=10).grid(
-            row=row, column=5, padx=4, pady=4
-        )
-
-        test_frame = ttk.LabelFrame(self.frame, text="Test Scan Corner")
-        test_frame.grid(row=0, column=6, rowspan=4, padx=(12, 4), pady=4, sticky="n")
-
-        ttk.Button(test_frame, text="LT", width=6,
-                   command=lambda: self.test_scan_corner("LT")).grid(row=0, column=0, padx=3, pady=3)
-        ttk.Button(test_frame, text="RT", width=6,
-                   command=lambda: self.test_scan_corner("RT")).grid(row=0, column=1, padx=3, pady=3)
-        ttk.Button(test_frame, text="LD", width=6,
-                   command=lambda: self.test_scan_corner("LD")).grid(row=1, column=0, padx=3, pady=3)
-        ttk.Button(test_frame, text="RD", width=6,
-                   command=lambda: self.test_scan_corner("RD")).grid(row=1, column=1, padx=3, pady=3)
+        corner_frame = ttk.Frame(self.frame)
+        corner_frame.grid(row=0, column=6, rowspan=3, padx=(8, 2), pady=2, sticky="ne")
+        ttk.Label(corner_frame, text="Corners").grid(row=0, column=0, columnspan=2, sticky="w")
+        ttk.Button(corner_frame, text="LT", width=4, command=lambda: self.test_scan_corner("LT")).grid(row=1, column=0,
+                                                                                                       padx=1, pady=1)
+        ttk.Button(corner_frame, text="RT", width=4, command=lambda: self.test_scan_corner("RT")).grid(row=1, column=1,
+                                                                                                       padx=1, pady=1)
+        ttk.Button(corner_frame, text="LD", width=4, command=lambda: self.test_scan_corner("LD")).grid(row=2, column=0,
+                                                                                                       padx=1, pady=1)
+        ttk.Button(corner_frame, text="RD", width=4, command=lambda: self.test_scan_corner("RD")).grid(row=2, column=1,
+                                                                                                       padx=1, pady=1)
 
         row += 1
-
-        ttk.Label(self.frame, text="Y Start (mm)").grid(
-            row=row, column=0, padx=4, pady=4, sticky="w"
-        )
-        ttk.Entry(self.frame, textvariable=self.y_start_var, width=10).grid(
-            row=row, column=1, padx=4, pady=4
-        )
-
-        ttk.Label(self.frame, text="Y Stop (mm)").grid(
-            row=row, column=2, padx=4, pady=4, sticky="w"
-        )
-        ttk.Entry(self.frame, textvariable=self.y_stop_var, width=10).grid(
-            row=row, column=3, padx=4, pady=4
-        )
-
-        ttk.Label(self.frame, text="Y Step (mm)").grid(
-            row=row, column=4, padx=4, pady=4, sticky="w"
-        )
-        ttk.Entry(self.frame, textvariable=self.y_step_var, width=10).grid(
-            row=row, column=5, padx=4, pady=4
-        )
+        ttk.Label(self.frame, text="Y0").grid(row=row, column=0, padx=2, pady=2, sticky="w")
+        ttk.Entry(self.frame, textvariable=self.y_start_var, width=7).grid(row=row, column=1, padx=2, pady=2)
+        ttk.Label(self.frame, text="Y1").grid(row=row, column=2, padx=2, pady=2, sticky="w")
+        ttk.Entry(self.frame, textvariable=self.y_stop_var, width=7).grid(row=row, column=3, padx=2, pady=2)
+        ttk.Label(self.frame, text="dY").grid(row=row, column=4, padx=2, pady=2, sticky="w")
+        ttk.Entry(self.frame, textvariable=self.y_step_var, width=7).grid(row=row, column=5, padx=2, pady=2)
 
         row += 1
+        ttk.Label(self.frame, text="Dwell (s)").grid(row=row, column=0, padx=2, pady=2, sticky="w")
+        ttk.Entry(self.frame, textvariable=self.dwell_var, width=7).grid(row=row, column=1, padx=2, pady=2)
+        ttk.Label(self.frame, text="Path: X+ / return / Y+").grid(row=row, column=2, columnspan=4, padx=4, pady=2,
+                                                                  sticky="w")
 
-        ttk.Label(self.frame, text="Dwell (s)").grid(
-            row=row, column=0, padx=4, pady=4, sticky="w"
-        )
-        ttk.Entry(self.frame, textvariable=self.dwell_var, width=10).grid(
-            row=row, column=1, padx=4, pady=4
-        )
+        row += 1
+        ttk.Button(self.frame, text="Start Scan", command=self.start_scan).grid(row=row, column=2, padx=4, pady=5,
+                                                                                sticky="ew")
+        ttk.Button(self.frame, text="Stop Scan", command=self.stop_scan).grid(row=row, column=3, padx=4, pady=5,
+                                                                              sticky="ew")
 
-        ttk.Checkbutton(
-            self.frame,
-            text="First point without moving",
-            variable=self.first_without_move_var,
-        ).grid(row=row, column=2, columnspan=2, padx=4, pady=4, sticky="w")
-
+        row += 1
         ttk.Label(
             self.frame,
-            text="Mode: X forward → return to X start → Y+ → repeat"
-        ).grid(row=row, column=4, columnspan=2, padx=4, pady=4, sticky="w")
-
-        row += 1
-
-        ttk.Button(self.frame, text="Start Scan", command=self.start_scan).grid(
-            row=row, column=2, padx=6, pady=8
-        )
-        ttk.Button(self.frame, text="Stop Scan", command=self.stop_scan).grid(
-            row=row, column=3, padx=6, pady=8
-        )
-
-        row += 1
-
-        ttk.Label(
-            self.frame,
-            text="Note: before starting, stage should already be at (X Start, Y Start)."
-        ).grid(row=row, column=0, columnspan=6, padx=4, pady=(6, 2), sticky="w")
+            text="Stage must already be at (X0, Y0) before Start.",
+        ).grid(row=row, column=0, columnspan=6, padx=2, pady=(2, 0), sticky="w")
 
     # ============================================================
     # Helpers
@@ -177,21 +131,16 @@ class ScanPanel:
                 )
 
             # Decide target corner
-            if corner == "LD":
-                target_x = x_start
-                target_y = y_start
-            elif corner == "RD":
-                target_x = x_stop
-                target_y = y_start
-            elif corner == "LT":
-                target_x = x_start
-                target_y = y_stop
-            elif corner == "RT":
-                target_x = x_stop
-                target_y = y_stop
-            else:
+            mapping = {
+                "LD": (x_start, y_start),
+                "RD": (x_stop, y_start),
+                "LT": (x_start, y_stop),
+                "RT": (x_stop, y_stop),
+            }
+            if corner not in mapping:
                 raise ValueError(f"Unknown corner: {corner}")
 
+            target_x, target_y = mapping[corner]
             dx = target_x - current_x
             dy = target_y - current_y
 
@@ -232,6 +181,10 @@ class ScanPanel:
                 raise RuntimeError("Stage is not connected.")
             if self.ctx.afg is None:
                 raise RuntimeError("AFG is not connected.")
+            if self.ctx.pico is None or not self.ctx.pico.is_connected():
+                raise RuntimeError("PicoScope is not connected.")
+            if not self.ctx.pico.is_configured():
+                raise RuntimeError("PicoScope is not configured. Please click Apply Config first.")
 
             x_start = self._get_float(self.x_start_var, "X Start")
             x_stop = self._get_float(self.x_stop_var, "X Stop")
@@ -242,7 +195,6 @@ class ScanPanel:
             y_step = self._get_float(self.y_step_var, "Y Step")
 
             dwell_s = self._get_float(self.dwell_var, "Dwell")
-            first_without_move = self.first_without_move_var.get()
 
             if x_step <= 0:
                 raise ValueError("X Step must be positive.")
@@ -257,36 +209,34 @@ class ScanPanel:
                 raise RuntimeError("A scan is already running.")
 
             self.scan_controller = ScanController(
+                ctx=self.ctx,
                 stage=self.ctx.stage,
                 afg=self.ctx.afg,
+                pico=self.ctx.pico,
                 log_func=self.log,
             )
+            # Reset the capture index and signal
+            self.ctx.last_pico_time = None
+            self.ctx.last_pico_signals = None
+            self.ctx.last_pico_meta = None
+            self.ctx.last_pico_update_id = 0
 
-            self.log("Preparing scan thread...")
             self.log(
-                f"X: {x_start} -> {x_stop}, step={x_step}; "
-                f"Y: {y_start} -> {y_stop}, step={y_step}; "
-                f"dwell={dwell_s}; first_without_move={first_without_move}"
+                f"[SCAN] Start requested: X {x_start}->{x_stop} step {x_step}; "
+                f"Y {y_start}->{y_stop} step {y_step}; dwell={dwell_s}s"
             )
-            self.log("Make sure stage is already at (X Start, Y Start).")
+            self.log("[SCAN] Make sure AFG trigger source is BUS and burst setup is already applied.")
 
-            self.scan_thread = threading.Thread(
-                target=self.scan_controller.raster_scan_return,
-                kwargs=dict(
-                    x_start=x_start,
-                    x_stop=x_stop,
-                    x_step=x_step,
-                    y_start=y_start,
-                    y_stop=y_stop,
-                    y_step=y_step,
-                    dwell_s=dwell_s,
-                    first_without_move=first_without_move,
-                    verbose=True,
-                ),
-                daemon=True,
+            self.scan_controller.start_scan_thread(
+                x_start=x_start,
+                x_stop=x_stop,
+                x_step=x_step,
+                y_start=y_start,
+                y_stop=y_stop,
+                y_step=y_step,
+                dwell_s=dwell_s,
+                verbose=True,
             )
-            self.scan_thread.start()
-
             self.log("Scan thread started.")
 
         except Exception as e:
