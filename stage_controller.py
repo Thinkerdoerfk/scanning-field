@@ -18,13 +18,16 @@ class GSC02CStage:
           home- => +travel_mm
     - Repeated stop() should be harmless
     - HPS80-50X-M5: 1 pulse = 1 um = 0.001 mm
+
+    This version adds stronger serial recovery on connect()/close() to help
+    after abnormal program crashes.
     """
 
     def __init__(
         self,
         port: str = "COM5",
         baudrate: int = 9600,
-        timeout: float = 2.0,
+        timeout: float = 0.2,
         step_to_mm: float = 0.001,
         travel_mm: float = 50.0,
     ):
@@ -60,25 +63,105 @@ class GSC02CStage:
     # Connection
     # ============================================================
     def connect(self):
-        self.ser = serial.Serial(
-            port=self.port,
-            baudrate=self.baudrate,
-            bytesize=serial.EIGHTBITS,
-            parity=serial.PARITY_NONE,
-            stopbits=serial.STOPBITS_ONE,
-            timeout=self.timeout,
-            rtscts=True,
-        )
-        time.sleep(0.2)
+        with self._io_lock:
+            if self.is_connected():
+                return
+
+            self.ser = serial.Serial(
+                port=self.port,
+                baudrate=self.baudrate,
+                bytesize=serial.EIGHTBITS,
+                parity=serial.PARITY_NONE,
+                stopbits=serial.STOPBITS_ONE,
+                timeout=self.timeout,
+                rtscts=True,
+            )
+            time.sleep(0.2)
+            self._recover_after_connect_no_lock()
 
     def close(self):
         with self._io_lock:
-            if self.ser and self.ser.is_open:
-                self.ser.close()
+            if self.ser is None:
+                return
+
+            try:
+                if self.ser.is_open:
+                    # Best-effort stop both axes before close.
+                    for axis in (1, 2):
+                        try:
+                            self.ser.write(f"L:{axis}\r\n".encode())
+                            time.sleep(0.03)
+                        except Exception:
+                            pass
+
+                    self._safe_reset_buffers_no_lock()
+                    self.ser.close()
+            finally:
                 self.ser = None
+
+    disconnect = close
 
     def is_connected(self) -> bool:
         return self.ser is not None and self.ser.is_open
+
+    def _recover_after_connect_no_lock(self):
+        if not self.is_connected():
+            return
+
+        # Clear stale buffers from previous crashed session.
+        self._safe_reset_buffers_no_lock()
+        time.sleep(0.05)
+
+        # Best-effort DTR/RTS toggle. Some USB-RS232 adapters recover better.
+        try:
+            self.ser.setDTR(False)
+            self.ser.setRTS(False)
+            time.sleep(0.05)
+            self.ser.setDTR(True)
+            self.ser.setRTS(True)
+            time.sleep(0.05)
+        except Exception:
+            pass
+
+        self._safe_reset_buffers_no_lock()
+        time.sleep(0.05)
+
+        # Send stop to both axes to clear leftover motion state.
+        for axis in (1, 2):
+            try:
+                self.ser.write(f"L:{axis}\r\n".encode())
+                time.sleep(0.05)
+            except Exception:
+                pass
+
+        self._safe_reset_buffers_no_lock()
+        time.sleep(0.05)
+
+        # Warm-up status reads: first one is sometimes stale.
+        try:
+            self.ser.write(b"Q:\r\n")
+            _ = self.ser.readline()
+        except Exception:
+            pass
+        time.sleep(0.05)
+
+        try:
+            self.ser.write(b"Q:\r\n")
+            _ = self.ser.readline()
+        except Exception:
+            pass
+
+    def _safe_reset_buffers_no_lock(self):
+        if not self.is_connected():
+            return
+        try:
+            self.ser.reset_input_buffer()
+        except Exception:
+            pass
+        try:
+            self.ser.reset_output_buffer()
+        except Exception:
+            pass
 
     # ============================================================
     # Low-level I/O
@@ -87,18 +170,32 @@ class GSC02CStage:
         if not self.is_connected():
             raise RuntimeError("Stage not connected")
         with self._io_lock:
+            if not self.is_connected():
+                raise RuntimeError("Stage not connected")
             self.ser.write(cmd.encode())
 
     def _readline(self) -> str:
         if not self.is_connected():
             raise RuntimeError("Stage not connected")
         with self._io_lock:
+            if not self.is_connected():
+                raise RuntimeError("Stage not connected")
             return self.ser.readline().decode(errors="ignore").strip()
 
     def _query(self, cmd: str) -> str:
         if not self.is_connected():
             raise RuntimeError("Stage not connected")
         with self._io_lock:
+            if not self.is_connected():
+                raise RuntimeError("Stage not connected")
+
+            # Clear stale input before fresh query to reduce chance of reading
+            # old status after a crash/reconnect.
+            try:
+                self.ser.reset_input_buffer()
+            except Exception:
+                pass
+
             self.ser.write(cmd.encode())
             return self.ser.readline().decode(errors="ignore").strip()
 
@@ -259,7 +356,7 @@ class GSC02CStage:
 
             if status.strip().endswith("R"):
                 return status
-            # If waiting time is out, then return
+
             if time.time() - t0 > timeout:
                 raise TimeoutError(f"Timeout. Last status: {status}")
 
