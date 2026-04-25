@@ -49,7 +49,10 @@ class PicoPanel(ttk.LabelFrame):
 
         self.var_capture_channels = tk.StringVar(value="B")
         self.var_save_channels = tk.StringVar(value="B")
-        self.var_vrange = tk.StringVar(value="V2")
+        self.var_range_A = tk.StringVar(value="V2")
+        self.var_range_B = tk.StringVar(value="V2")
+        self.var_range_C = tk.StringVar(value="V2")
+        self.var_range_D = tk.StringVar(value="V2")
         self.var_coupling = tk.StringVar(value="DC")
         self.var_sample_rate_mhz = tk.StringVar(value="62.5")
         self.var_duration_us = tk.StringVar(value="50.0")
@@ -89,29 +92,60 @@ class PicoPanel(ttk.LabelFrame):
         ttk.Entry(cfg, textvariable=self.var_capture_channels, width=18).grid(row=r, column=1, sticky="ew", padx=4)
         ttk.Label(cfg, text="e.g. B or B,C or B,C,D").grid(row=r, column=2, columnspan=2, sticky="w")
 
+        range_values = ["10mV", "20mV", "50mV", "100mV", "200mV", "500mV", "V1", "V2", "V5", "V10", "V20"]
+
         r += 1
         ttk.Label(cfg, text="Save channels").grid(row=r, column=0, sticky="w")
         ttk.Entry(cfg, textvariable=self.var_save_channels, width=18).grid(row=r, column=1, sticky="ew", padx=4)
         ttk.Label(cfg, text="saved only, e.g. B or A,B").grid(row=r, column=2, columnspan=2, sticky="w")
 
         r += 1
-        ttk.Label(cfg, text="Voltage range").grid(row=r, column=0, sticky="w")
+        ttk.Label(cfg, text="Range A").grid(row=r, column=0, sticky="w")
         ttk.Combobox(
             cfg,
-            textvariable=self.var_vrange,
-            values=["10mV", "20mV", "50mV", "100mV", "200mV", "500mV", "V1", "V2", "V5", "V10", "V20"],
+            textvariable=self.var_range_A,
+            values=range_values,
             width=15,
             state="readonly",
         ).grid(row=r, column=1, sticky="ew", padx=4)
 
-        ttk.Label(cfg, text="Coupling").grid(row=r, column=2, sticky="w")
+        ttk.Label(cfg, text="Range B").grid(row=r, column=2, sticky="w")
+        ttk.Combobox(
+            cfg,
+            textvariable=self.var_range_B,
+            values=range_values,
+            width=15,
+            state="readonly",
+        ).grid(row=r, column=3, sticky="ew", padx=4)
+
+        r += 1
+        ttk.Label(cfg, text="Range C").grid(row=r, column=0, sticky="w")
+        ttk.Combobox(
+            cfg,
+            textvariable=self.var_range_C,
+            values=range_values,
+            width=15,
+            state="readonly",
+        ).grid(row=r, column=1, sticky="ew", padx=4)
+
+        ttk.Label(cfg, text="Range D").grid(row=r, column=2, sticky="w")
+        ttk.Combobox(
+            cfg,
+            textvariable=self.var_range_D,
+            values=range_values,
+            width=15,
+            state="readonly",
+        ).grid(row=r, column=3, sticky="ew", padx=4)
+
+        r += 1
+        ttk.Label(cfg, text="Coupling").grid(row=r, column=0, sticky="w")
         ttk.Combobox(
             cfg,
             textvariable=self.var_coupling,
             values=["DC", "AC", "DC_50OHM"],
             width=15,
             state="readonly",
-        ).grid(row=r, column=3, sticky="ew", padx=4)
+        ).grid(row=r, column=1, sticky="ew", padx=4)
 
         r += 1
         ttk.Label(cfg, text="Sample rate (MHz)").grid(row=r, column=0, sticky="w")
@@ -356,6 +390,20 @@ class PicoPanel(ttk.LabelFrame):
                 out.append(ch)
         return out
 
+    def _get_channel_ranges(self):
+        ranges = {
+            "A": self.var_range_A.get().strip(),
+            "B": self.var_range_B.get().strip(),
+            "C": self.var_range_C.get().strip(),
+            "D": self.var_range_D.get().strip(),
+        }
+
+        valid = {"10mV", "20mV", "50mV", "100mV", "200mV", "500mV", "V1", "V2", "V5", "V10", "V20"}
+        for ch, vr in ranges.items():
+            if vr not in valid:
+                raise ValueError(f"Invalid range for channel {ch}: {vr}")
+        return ranges
+
     # ------------------------------------------------------------------
     # connect/disconnect
     # ------------------------------------------------------------------
@@ -405,9 +453,11 @@ class PicoPanel(ttk.LabelFrame):
             capture_channels = self._parse_capture_channels()
             save_channels = self._parse_save_channels()
 
+            channel_ranges = self._get_channel_ranges()
+
             summary = self.ctx.pico.apply_config(
                 capture_channels=capture_channels,
-                vrange=self.var_vrange.get(),
+                channel_ranges=channel_ranges,
                 coupling=self.var_coupling.get(),
                 sample_rate_mhz=float(self.var_sample_rate_mhz.get()),
                 duration_us=float(self.var_duration_us.get()),

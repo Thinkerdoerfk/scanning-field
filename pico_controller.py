@@ -56,7 +56,12 @@ class PicoController:
         # current config
         self.capture_channels: List[str] = []
         self.save_channels: List[str] = []
-        self.vrange: str = "V2"
+        self.channel_ranges: Dict[str, str] = {
+            "A": "V2",
+            "B": "V2",
+            "C": "V2",
+            "D": "V2",
+        }
         self.coupling: str = "DC"
 
         self.sample_rate_mhz: float = 62.5
@@ -253,6 +258,41 @@ class PicoController:
                 out.append(label)
         return out
 
+    def _parse_channel_ranges(self, channel_ranges: Any = None, vrange: Optional[str] = None) -> Dict[str, str]:
+        """
+        Normalize per-channel voltage range settings.
+
+        Accept:
+        - channel_ranges=None and vrange="V2" -> all channels use V2
+        - channel_ranges={"A":"V2", "B":"20mV", ...}
+        """
+        if channel_ranges is None:
+            fallback = str(vrange).strip() if vrange is not None else None
+            out: Dict[str, str] = {}
+            for ch in ("A", "B", "C", "D"):
+                value = fallback if fallback is not None else self.channel_ranges.get(ch, "V2")
+                value = str(value).strip()
+                self._normalize_range_enum(value)
+                out[ch] = value
+            return out
+
+        if not isinstance(channel_ranges, dict):
+            raise ValueError("channel_ranges must be a dict like {'A':'V2','B':'20mV',...}")
+
+        out: Dict[str, str] = {}
+        fallback = str(vrange).strip() if vrange is not None else None
+        for ch in ("A", "B", "C", "D"):
+            if ch in channel_ranges:
+                value = channel_ranges[ch]
+            elif fallback is not None:
+                value = fallback
+            else:
+                value = self.channel_ranges.get(ch, "V2")
+            value = str(value).strip()
+            self._normalize_range_enum(value)
+            out[ch] = value
+        return out
+
     def _build_channels_for_run(self) -> List[str]:
         """
         Channels enabled for this run:
@@ -290,7 +330,7 @@ class PicoController:
         return {
             "capture_channels": list(self.capture_channels),
             "save_channels": list(self.save_channels),
-            "vrange": self.vrange,
+            "channel_ranges": dict(self.channel_ranges),
             "coupling": self.coupling,
             "resolution_bits": self.FIXED_RESOLUTION_BITS,
             "sample_rate_mhz": self.sample_rate_mhz,
@@ -313,7 +353,7 @@ class PicoController:
     def apply_config(
         self,
         capture_channels: Any,
-        vrange: str,
+        channel_ranges: Optional[Dict[str, str]] = None,
         coupling: str,
         sample_rate_mhz: float,
         duration_us: float,
@@ -322,6 +362,7 @@ class PicoController:
         trigger_direction: str,
         trigger_threshold_mv: float,
         auto_trigger_us: int,
+        vrange: Optional[str] = None,
     ) -> Dict[str, Any]:
         self._require_scope()
         self._set_resolution_8bit()
@@ -345,7 +386,7 @@ class PicoController:
         if not self.save_channels:
             self.save_channels = list(self.capture_channels)
 
-        self.vrange = str(vrange).strip()
+        self.channel_ranges = self._parse_channel_ranges(channel_ranges=channel_ranges, vrange=vrange)
         self.coupling = str(coupling).strip()
 
         self.sample_rate_mhz = sample_rate_mhz
@@ -378,10 +419,11 @@ class PicoController:
         self._channels_for_run = self._build_channels_for_run()
         self._channels_to_buffer = list(self._channels_for_run)
 
-        range_enum = self._normalize_range_enum(self.vrange)
         coupling_enum = self._normalize_coupling(self.coupling)
 
         for ch in self._channels_for_run:
+            ch_range = self.channel_ranges.get(ch, "V2")
+            range_enum = self._normalize_range_enum(ch_range)
             self.scope.set_channel(
                 channel=self._channel_enum(ch),
                 range=range_enum,
@@ -501,7 +543,7 @@ class PicoController:
                 "trigger_source": self.trigger_source,
                 "display_channels": list(self._channels_for_run),
                 "channels_for_run": list(self._channels_for_run),
-                "vrange": self.vrange,
+                "channel_ranges": dict(self.channel_ranges),
                 "coupling": self.coupling,
                 "resolution_bits": self.FIXED_RESOLUTION_BITS,
                 "requested_sample_rate_mhz": self.sample_rate_mhz,
