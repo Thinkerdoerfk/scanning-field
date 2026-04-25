@@ -5,3 +5,5 @@ picosdk==1.1
 typing-extensions==4.15.0
 matplotlib
 pypicosdk
+pandas
+scipy
