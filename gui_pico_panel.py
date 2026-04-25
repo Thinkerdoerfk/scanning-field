@@ -48,6 +48,7 @@ class PicoPanel(ttk.LabelFrame):
         self.var_idn = tk.StringVar(value="Not connected")
 
         self.var_capture_channels = tk.StringVar(value="B")
+        self.var_save_channels = tk.StringVar(value="B")
         self.var_vrange = tk.StringVar(value="V2")
         self.var_coupling = tk.StringVar(value="DC")
         self.var_sample_rate_mhz = tk.StringVar(value="62.5")
@@ -87,6 +88,11 @@ class PicoPanel(ttk.LabelFrame):
         ttk.Label(cfg, text="Capture channels").grid(row=r, column=0, sticky="w")
         ttk.Entry(cfg, textvariable=self.var_capture_channels, width=18).grid(row=r, column=1, sticky="ew", padx=4)
         ttk.Label(cfg, text="e.g. B or B,C or B,C,D").grid(row=r, column=2, columnspan=2, sticky="w")
+
+        r += 1
+        ttk.Label(cfg, text="Save channels").grid(row=r, column=0, sticky="w")
+        ttk.Entry(cfg, textvariable=self.var_save_channels, width=18).grid(row=r, column=1, sticky="ew", padx=4)
+        ttk.Label(cfg, text="saved only, e.g. B or A,B").grid(row=r, column=2, columnspan=2, sticky="w")
 
         r += 1
         ttk.Label(cfg, text="Voltage range").grid(row=r, column=0, sticky="w")
@@ -329,6 +335,27 @@ class PicoPanel(ttk.LabelFrame):
                 out.append(ch)
         return out
 
+    def _parse_save_channels(self):
+        text = self.var_save_channels.get().strip()
+        if not text:
+            return self._parse_capture_channels()
+
+        items = [x.strip().upper() for x in text.split(",") if x.strip()]
+        if not items:
+            return self._parse_capture_channels()
+
+        for ch in items:
+            if ch not in ("A", "B", "C", "D"):
+                raise ValueError(f"Invalid save channel: {ch}")
+
+        out = []
+        seen = set()
+        for ch in items:
+            if ch not in seen:
+                seen.add(ch)
+                out.append(ch)
+        return out
+
     # ------------------------------------------------------------------
     # connect/disconnect
     # ------------------------------------------------------------------
@@ -376,6 +403,7 @@ class PicoPanel(ttk.LabelFrame):
                 raise RuntimeError("PicoScope not connected")
 
             capture_channels = self._parse_capture_channels()
+            save_channels = self._parse_save_channels()
 
             summary = self.ctx.pico.apply_config(
                 capture_channels=capture_channels,
@@ -390,6 +418,8 @@ class PicoPanel(ttk.LabelFrame):
                 auto_trigger_us=int(float(self.var_auto_trigger_us.get())),
             )
 
+            self.ctx.pico.set_save_channels(save_channels)
+            summary = self.ctx.pico.get_config_summary()
             self.log(f"[PICO] Config applied: {summary}")
 
             save_dir = self.var_save_dir.get().strip()
@@ -453,16 +483,20 @@ class PicoPanel(ttk.LabelFrame):
 
             result = self.ctx.pico.wait_and_fetch_current_capture()
 
-            save_path = None
+            save_paths = {}
             if save_dir:
-                save_path = self.ctx.pico.save_capture_npz(result, folder=save_dir)
+                save_paths = self.ctx.pico.save_capture_npz(
+                    result=result,
+                    folder=save_dir,
+                    save_channels=self._parse_save_channels(),
+                )
 
-            self.after(0, lambda: self._on_capture_test_success(result, save_path))
+            self.after(0, lambda: self._on_capture_test_success(result, save_paths))
 
         except Exception as e:
             self.after(0, lambda err=e: self._on_capture_test_error(err))
 
-    def _on_capture_test_success(self, result, save_path):
+    def _on_capture_test_success(self, result, save_paths):
         try:
             self.ctx.last_pico_time = result.time_s
             self.ctx.last_pico_signals = result.signals_v
@@ -487,8 +521,9 @@ class PicoPanel(ttk.LabelFrame):
                 f"dt={result.meta.get('dt_s')}"
             )
 
-            if save_path:
-                self.log(f"[PICO] Saved: {save_path}")
+            if save_paths:
+                for ch, path in save_paths.items():
+                    self.log(f"[PICO] Saved channel {ch}: {path}")
         finally:
             self._capture_running = False
             self._refresh_status()

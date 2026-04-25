@@ -1,5 +1,6 @@
 import time
 import threading
+import traceback
 import numpy as np
 
 
@@ -105,7 +106,7 @@ class ScanController:
         result = pico.wait_and_fetch_current_capture()
 
         # 5. save waveform
-        save_path = pico.save_capture_npz(
+        save_paths = pico.save_capture_npz(
             result=result,
             point_index=point_index,
             x_mm=x_mm,
@@ -119,7 +120,8 @@ class ScanController:
         self.ctx.last_pico_update_id = getattr(self.ctx, "last_pico_update_id", 0) + 1
 
         if verbose:
-            self.log(f"[SCAN] Pico saved: {save_path}")
+            for ch, path in save_paths.items():
+                self.log(f"[SCAN] Saved channel {ch}: {path}")
 
     def move_x_rel(self, dx_mm: float, verbose: bool = True):
         if abs(dx_mm) <= 1e-12:
@@ -184,7 +186,7 @@ class ScanController:
             self.log(
                 f"X: {x_start} -> {x_stop} step {x_step}, "
                 f"Y: {y_start} -> {y_stop} step {y_step}, "
-                f"dwell={dwell_s} s, first_without_move={first_without_move}"
+                f"dwell={dwell_s} s"
             )
             self.log(f"X points: {xs}")
             self.log(f"Y points: {ys}")

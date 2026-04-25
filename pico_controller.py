@@ -55,6 +55,7 @@ class PicoController:
 
         # current config
         self.capture_channels: List[str] = []
+        self.save_channels: List[str] = []
         self.vrange: str = "V2"
         self.coupling: str = "DC"
 
@@ -282,10 +283,13 @@ class PicoController:
             raise ValueError("folder cannot be empty")
         os.makedirs(folder, exist_ok=True)
         self.save_dir = folder
+    def set_save_channels(self, save_channels: Any):
+        self.save_channels = self._parse_capture_channels(save_channels)
 
     def get_config_summary(self) -> Dict[str, Any]:
         return {
             "capture_channels": list(self.capture_channels),
+            "save_channels": list(self.save_channels),
             "vrange": self.vrange,
             "coupling": self.coupling,
             "resolution_bits": self.FIXED_RESOLUTION_BITS,
@@ -338,6 +342,9 @@ class PicoController:
             raise ValueError("sample_rate_mhz must be > 0")
 
         self.capture_channels = self._parse_capture_channels(capture_channels)
+        if not self.save_channels:
+            self.save_channels = list(self.capture_channels)
+
         self.vrange = str(vrange).strip()
         self.coupling = str(coupling).strip()
 
@@ -536,34 +543,59 @@ class PicoController:
         y_mm: Optional[float] = None,
         prefix: str = "capture",
         folder: Optional[str] = None,
-    ) -> str:
+        save_channels: Optional[Any] = None,
+    ) -> Dict[str, str]:
         save_folder = folder or self.save_dir
         if not save_folder:
             raise RuntimeError("No save folder specified.")
         os.makedirs(save_folder, exist_ok=True)
 
-        if point_index is None:
-            stamp = time.strftime("%Y%m%d_%H%M%S")
-            filename = f"{prefix}_{stamp}.npz"
+        if save_channels is None:
+            channels_to_save = list(self.save_channels) if self.save_channels else list(self.capture_channels)
         else:
-            filename = f"{prefix}_{int(point_index):06d}.npz"
+            channels_to_save = self._parse_capture_channels(save_channels)
 
-        path = os.path.join(save_folder, filename)
+        if not channels_to_save:
+            raise RuntimeError("No save channels specified.")
 
-        payload = {
-            "time_s": result.time_s,
-            "meta": np.array(result.meta, dtype=object),
-        }
+        saved_paths: Dict[str, str] = {}
 
-        for ch, sig in result.signals_v.items():
-            payload[f"signal_{ch}"] = sig
+        for ch in channels_to_save:
+            if ch not in result.signals_v:
+                continue
 
-        if point_index is not None:
-            payload["point_index"] = point_index
-        if x_mm is not None:
-            payload["x_mm"] = float(x_mm)
-        if y_mm is not None:
-            payload["y_mm"] = float(y_mm)
+            ch_folder = os.path.join(save_folder, ch)
+            os.makedirs(ch_folder, exist_ok=True)
 
-        np.savez_compressed(path, **payload)
-        return path
+            if point_index is None:
+                file_index = self._get_next_channel_file_index(ch_folder, prefix)
+            else:
+                file_index = int(point_index)
+
+            filename = f"{prefix}_{file_index:06d}.npz"
+            path = os.path.join(ch_folder, filename)
+
+            payload = {
+                "time_s": np.asarray(result.time_s, dtype=float),
+                "signal": np.asarray(result.signals_v[ch], dtype=float),
+                "channel": np.array(ch),
+                "meta": np.array(result.meta, dtype=object),
+            }
+
+            if point_index is not None:
+                payload["point_index"] = int(point_index)
+            if x_mm is not None:
+                payload["x_mm"] = float(x_mm)
+            if y_mm is not None:
+                payload["y_mm"] = float(y_mm)
+
+            np.savez_compressed(path, **payload)
+            saved_paths[ch] = path
+
+        if not saved_paths:
+            raise RuntimeError(
+                f"None of the requested save channels {channels_to_save} were present in capture result. "
+                f"Available channels: {list(result.signals_v.keys())}"
+            )
+
+        return saved_paths

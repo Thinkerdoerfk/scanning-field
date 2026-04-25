@@ -186,6 +186,12 @@ class ScanPanel:
             if not self.ctx.pico.is_configured():
                 raise RuntimeError("PicoScope is not configured. Please click Apply Config first.")
 
+            save_dir = getattr(self.ctx.pico, "save_dir", None)
+            if not save_dir:
+                raise RuntimeError("Please choose a save folder in Pico panel before starting scan.")
+            if not getattr(self.ctx.pico, "save_channels", None):
+                raise RuntimeError("No save channels selected. Please apply Pico config first.")
+
             x_start = self._get_float(self.x_start_var, "X Start")
             x_stop = self._get_float(self.x_stop_var, "X Stop")
             x_step = self._get_float(self.x_step_var, "X Step")
