@@ -30,6 +30,7 @@ class ScanPanel:
         self.y_step_var = tk.StringVar(value="0.5")
 
         self.dwell_var = tk.StringVar(value="0.1")
+        self.trigger_count_var = tk.StringVar(value="1")
 
         self._build_ui()
 
@@ -72,7 +73,11 @@ class ScanPanel:
         row += 1
         ttk.Label(self.frame, text="Dwell (s)").grid(row=row, column=0, padx=2, pady=2, sticky="w")
         ttk.Entry(self.frame, textvariable=self.dwell_var, width=7).grid(row=row, column=1, padx=2, pady=2)
-        ttk.Label(self.frame, text="Path: X+ / return / Y+").grid(row=row, column=2, columnspan=4, padx=4, pady=2,
+        trigger_frame = ttk.Frame(self.frame)
+        trigger_frame.grid(row=row, column=2, columnspan=2, padx=2, pady=2, sticky="w")
+        ttk.Label(trigger_frame, text="Trig/point").pack(side="left")
+        ttk.Entry(trigger_frame, textvariable=self.trigger_count_var, width=7).pack(side="left", padx=(4, 0))
+        ttk.Label(self.frame, text="Path: X+ / return / Y+").grid(row=row, column=4, columnspan=2, padx=4, pady=2,
                                                                   sticky="w")
 
         row += 1
@@ -95,6 +100,16 @@ class ScanPanel:
             return float(var.get().strip())
         except Exception:
             raise ValueError(f"Invalid value for {name}")
+
+    def _get_int(self, var, name):
+        text = var.get().strip()
+        try:
+            value = int(text)
+        except Exception:
+            raise ValueError(f"Invalid value for {name}: must be an integer")
+        if str(value) != text:
+            raise ValueError(f"Invalid value for {name}: must be an integer")
+        return value
 
     # ============================================================
     # Actions
@@ -201,6 +216,7 @@ class ScanPanel:
             y_step = self._get_float(self.y_step_var, "Y Step")
 
             dwell_s = self._get_float(self.dwell_var, "Dwell")
+            trigger_count = self._get_int(self.trigger_count_var, "Trig/point")
 
             if x_step <= 0:
                 raise ValueError("X Step must be positive.")
@@ -210,6 +226,8 @@ class ScanPanel:
                 raise ValueError("X Stop must be >= X Start.")
             if y_stop < y_start:
                 raise ValueError("Y Stop must be >= Y Start.")
+            if trigger_count < 1 or trigger_count > 32:
+                raise ValueError("Trig/point must be an integer from 1 to 32.")
 
             if self.scan_controller is not None and self.scan_controller.is_running:
                 raise RuntimeError("A scan is already running.")
@@ -229,7 +247,8 @@ class ScanPanel:
 
             self.log(
                 f"[SCAN] Start requested: X {x_start}->{x_stop} step {x_step}; "
-                f"Y {y_start}->{y_stop} step {y_step}; dwell={dwell_s}s"
+                f"Y {y_start}->{y_stop} step {y_step}; dwell={dwell_s}s; "
+                f"trig/point={trigger_count}"
             )
             self.log("[SCAN] Make sure AFG trigger source is BUS and burst setup is already applied.")
 
@@ -241,6 +260,7 @@ class ScanPanel:
                 y_stop=y_stop,
                 y_step=y_step,
                 dwell_s=dwell_s,
+                trigger_count=trigger_count,
                 verbose=True,
             )
             self.log("Scan thread started.")

@@ -89,7 +89,7 @@ class PicoController:
         self._channels_to_buffer: List[str] = []    # same as _channels_for_run here
 
         # stable workaround
-        self.sleep_after_arm_s: float = 0.2
+        self.sleep_after_arm_s: float = 0.005
 
         # save / result
         self.save_dir: Optional[str] = None
@@ -623,6 +623,11 @@ class PicoController:
                 "channel": np.array(ch),
                 "meta": np.array(result.meta, dtype=object),
             }
+            signal = payload["signal"]
+            if signal.ndim == 2:
+                payload["trigger_count"] = int(signal.shape[0])
+            else:
+                payload["trigger_count"] = 1
 
             if point_index is not None:
                 payload["point_index"] = int(point_index)

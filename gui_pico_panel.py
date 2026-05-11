@@ -30,12 +30,14 @@ class PicoPanel(ttk.LabelFrame):
 
         self._capture_thread = None
         self._capture_running = False
+        self._last_seen_update_id = getattr(self.ctx, "last_pico_update_id", 0)
 
         self._build_vars()
         self._build_layout()
         self._build_plot()
 
         self._refresh_status()
+        self._poll_scan_waveform()
 
         # auto place itself into parent, old-style
         self.pack(fill="both", expand=True, pady=4)
@@ -324,6 +326,8 @@ class PicoPanel(ttk.LabelFrame):
 
             if ch in display_channels and ch in signals_v:
                 y = np.asarray(signals_v[ch], dtype=float)
+                if y.ndim == 2:
+                    y = y[-1]
                 ax.plot(t_us, y, linewidth=1.0)
             else:
                 ax.text(
@@ -607,3 +611,18 @@ class PicoPanel(ttk.LabelFrame):
                 self.var_idn.set("Connected")
         else:
             self.var_idn.set("Not connected")
+
+    def _poll_scan_waveform(self):
+        try:
+            update_id = getattr(self.ctx, "last_pico_update_id", 0)
+            if update_id != self._last_seen_update_id:
+                self._last_seen_update_id = update_id
+                self._plot_result(
+                    getattr(self.ctx, "last_pico_time", None),
+                    getattr(self.ctx, "last_pico_signals", None),
+                    getattr(self.ctx, "last_pico_meta", None),
+                )
+        except Exception as e:
+            self.log(f"[PICO] Live plot refresh failed: {e}")
+        finally:
+            self.after(200, self._poll_scan_waveform)

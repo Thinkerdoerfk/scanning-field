@@ -17,8 +17,7 @@ class ScanController:
 
     Notes:
         - relative move only
-        - no Pico acquisition yet
-        - trigger AFG once at each point
+        - trigger AFG one or more times at each point
     """
 
     def __init__(self, ctx, stage, afg, pico, log_func=None):
@@ -61,16 +60,18 @@ class ScanController:
             x_mm: float,
             y_mm: float,
             dwell_s: float = 0.0,
+            trigger_count: int = 1,
             verbose: bool = True,
     ) -> None:
         """
         At current scan point:
-            1. arm Pico (already configured in PicoPanel)
-            2. optionally wait dwell_s
-            3. fire AFG software trigger once
+            1. optionally wait dwell_s once at this scan point
+            2. arm Pico (already configured in PicoPanel)
+            3. fire AFG software trigger
             4. wait Pico capture complete
-            5. save waveform to NPZ
-            6. publish latest waveform to ctx for PicoPanel auto-refresh
+            5. repeat 2-4 trigger_count times
+            6. save all trigger waveforms for this point to one NPZ
+            7. publish latest waveform to ctx for PicoPanel auto-refresh
         """
         pico = self.ctx.pico
         afg = self.ctx.afg
@@ -84,26 +85,41 @@ class ScanController:
             raise RuntimeError("Pico is not connected")
         if not pico.is_configured():
             raise RuntimeError("Pico is not configured in Pico panel")
+        trigger_count = int(trigger_count)
+        if trigger_count < 1 or trigger_count > 32:
+            raise ValueError("trigger_count must be an integer from 1 to 32")
 
         if verbose:
             self.log(
-                f"[SCAN] Point #{point_index}: arm Pico at x={x_mm:.3f} mm, y={y_mm:.3f} mm"
+                f"[SCAN] Point #{point_index}: x={x_mm:.3f} mm, y={y_mm:.3f} mm, "
+                f"trig/point={trigger_count}"
             )
 
-        # 1. Pico enters waiting-for-trigger state
-        pico.arm_current_capture()
-
-        # 2. optional wait
+        # Dwell is a point-settling delay, so apply it once before repeated triggers.
         if dwell_s > 0:
             time.sleep(dwell_s)
 
-        # 3. fire AFG
-        if verbose:
-            self.log("[SCAN] Fire AFG software trigger once.")
-        afg.fire_software_trigger_once()
+        results = []
+        for trig_index in range(1, trigger_count + 1):
+            if self._stop_requested:
+                self.log("[SCAN] Scan stopped by user.")
+                return
 
-        # 4. wait and fetch waveform
-        result = pico.wait_and_fetch_current_capture()
+            if verbose and (trig_index == 1 or trig_index == trigger_count or trig_index % 8 == 0):
+                self.log(
+                    f"[SCAN] Point #{point_index}, trigger {trig_index}/{trigger_count}: arm Pico."
+                )
+
+            # 1. Pico enters waiting-for-trigger state
+            pico.arm_current_capture()
+
+            # 2. fire AFG
+            afg.fire_software_trigger_once()
+
+            # 3. wait and fetch waveform
+            results.append(pico.wait_and_fetch_current_capture())
+
+        result = self._combine_point_results(results, point_index, x_mm, y_mm, trigger_count)
 
         # 5. save waveform
         save_paths = pico.save_capture_npz(
@@ -115,13 +131,46 @@ class ScanController:
 
         # 6. publish latest waveform to shared context
         self.ctx.last_pico_time = result.time_s
-        self.ctx.last_pico_signals = result.signals_v
+        self.ctx.last_pico_signals = {
+            ch: np.asarray(signal, dtype=float)[-1] if np.asarray(signal).ndim == 2 else signal
+            for ch, signal in result.signals_v.items()
+        }
         self.ctx.last_pico_meta = result.meta
         self.ctx.last_pico_update_id = getattr(self.ctx, "last_pico_update_id", 0) + 1
 
         if verbose:
             for ch, path in save_paths.items():
                 self.log(f"[SCAN] Saved channel {ch}: {path}")
+
+    def _combine_point_results(self, results, point_index, x_mm, y_mm, trigger_count):
+        if not results:
+            raise RuntimeError("No Pico captures were collected for this point")
+
+        first = results[0]
+        combined_signals = {}
+        for ch in first.signals_v.keys():
+            combined_signals[ch] = np.stack(
+                [np.asarray(result.signals_v[ch], dtype=float) for result in results],
+                axis=0,
+            )
+
+        meta = dict(first.meta)
+        meta.update(
+            {
+                "point_index": int(point_index),
+                "x_mm": float(x_mm),
+                "y_mm": float(y_mm),
+                "trigger_count": int(trigger_count),
+                "signal_shape": "trigger_count x samples",
+                "per_trigger_meta": [dict(result.meta) for result in results],
+            }
+        )
+
+        return type(first)(
+            time_s=np.asarray(first.time_s, dtype=float),
+            signals_v=combined_signals,
+            meta=meta,
+        )
 
     def move_x_rel(self, dx_mm: float, verbose: bool = True):
         if abs(dx_mm) <= 1e-12:
@@ -151,6 +200,7 @@ class ScanController:
         y_stop: float,
         y_step: float,
         dwell_s: float = 0.0,
+        trigger_count: int = 1,
         verbose: bool = True,
     ):
         """
@@ -175,6 +225,9 @@ class ScanController:
                 raise ValueError("x_step and y_step must be positive")
             if x_stop < x_start or y_stop < y_start:
                 raise ValueError("Require x_stop >= x_start and y_stop >= y_start")
+            trigger_count = int(trigger_count)
+            if trigger_count < 1 or trigger_count > 32:
+                raise ValueError("trigger_count must be an integer from 1 to 32")
 
             xs = np.arange(x_start, x_stop + 0.5 * x_step, x_step, dtype=float)
             ys = np.arange(y_start, y_stop + 0.5 * y_step, y_step, dtype=float)
@@ -186,7 +239,7 @@ class ScanController:
             self.log(
                 f"X: {x_start} -> {x_stop} step {x_step}, "
                 f"Y: {y_start} -> {y_stop} step {y_step}, "
-                f"dwell={dwell_s} s"
+                f"dwell={dwell_s} s, trig/point={trigger_count}"
             )
             self.log(f"X points: {xs}")
             self.log(f"Y points: {ys}")
@@ -223,6 +276,7 @@ class ScanController:
                         x_mm=current_x,
                         y_mm=current_y,
                         dwell_s=dwell_s,
+                        trigger_count=trigger_count,
                         verbose=verbose,
                     )
                     point_index += 1
@@ -276,6 +330,7 @@ class ScanController:
         y_stop: float,
         y_step: float,
         dwell_s: float = 0.0,
+        trigger_count: int = 1,
         verbose: bool = True,
     ):
         if self._is_running:
@@ -291,6 +346,7 @@ class ScanController:
                 y_stop=y_stop,
                 y_step=y_step,
                 dwell_s=dwell_s,
+                trigger_count=trigger_count,
                 verbose=verbose,
             ),
             daemon=True,
