@@ -16,8 +16,8 @@ Requirements on the control PC:
 
 Typical use:
     # Human-friendly millimetre mode, recommended after confirming direction:
-    python labjack_stage_controller.py --mm 1
-    python labjack_stage_controller.py --mm -1
+    python labjack_zstage_controller.py --mm 1
+    python labjack_zstage_controller.py --mm -1
 
     # Low-level device-count mode, same as the MATLAB relStep:
     python labjack_stage_controller.py --step-counts 100
