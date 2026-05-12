@@ -96,10 +96,16 @@ class AFGController:
     def set_sine(self, frequency_hz: float, amplitude_vpp: float, offset_v: float = 0.0):
         ch = self.channel
         self.write(f"SOURce{ch}:FUNCtion SINusoid")
-        self.write(f"SOURce{ch}:FREQuency:FIXed {frequency_hz}")
+        self.set_frequency(frequency_hz)
         self.write(f"SOURce{ch}:VOLTage:UNIT VPP")
         self.write(f"SOURce{ch}:VOLTage:LEVel:IMMediate:AMPLitude {amplitude_vpp}")
         self.write(f"SOURce{ch}:VOLTage:LEVel:IMMediate:OFFSet {offset_v}")
+
+    def set_frequency(self, frequency_hz: float):
+        if frequency_hz <= 0:
+            raise ValueError("frequency_hz must be > 0")
+        ch = self.channel
+        self.write(f"SOURce{ch}:FREQuency:FIXed {float(frequency_hz)}")
 
     def configure_2mhz_100mvpp(self):
         self.set_sine(frequency_hz=2e6, amplitude_vpp=0.1, offset_v=0.0)

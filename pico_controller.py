@@ -624,10 +624,18 @@ class PicoController:
                 "meta": np.array(result.meta, dtype=object),
             }
             signal = payload["signal"]
-            if signal.ndim == 2:
+            excitation_frequencies_hz = result.meta.get("excitation_frequencies_hz")
+            if excitation_frequencies_hz is not None:
+                payload["trigger_count"] = 1
+            elif signal.ndim == 2:
                 payload["trigger_count"] = int(signal.shape[0])
             else:
                 payload["trigger_count"] = 1
+
+            if excitation_frequencies_hz is not None:
+                payload["excitation_frequencies_hz"] = np.asarray(excitation_frequencies_hz, dtype=float)
+                payload["excitation_frequencies_mhz"] = payload["excitation_frequencies_hz"] / 1e6
+                payload["frequency_count"] = int(len(payload["excitation_frequencies_hz"]))
 
             if point_index is not None:
                 payload["point_index"] = int(point_index)

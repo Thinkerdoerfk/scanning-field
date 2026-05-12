@@ -1,6 +1,7 @@
 import threading
 import tkinter as tk
 from tkinter import ttk, messagebox
+import numpy as np
 
 from scan_controller import ScanController
 
@@ -30,7 +31,12 @@ class ScanPanel:
         self.y_step_var = tk.StringVar(value="0.5")
 
         self.dwell_var = tk.StringVar(value="0.1")
-        self.trigger_count_var = tk.StringVar(value="1")
+        self.freq_start_mhz_var = tk.StringVar(value="1.0")
+        self.freq_stop_mhz_var = tk.StringVar(value="2.0")
+        self.freq_step_khz_var = tk.StringVar(value="100")
+        # Repeated sampling at one point is temporarily disabled.
+        # Keep this variable for restoring repeated captures later if needed.
+        # self.trigger_count_var = tk.StringVar(value="1")
 
         self._build_ui()
 
@@ -73,18 +79,27 @@ class ScanPanel:
         row += 1
         ttk.Label(self.frame, text="Dwell (s)").grid(row=row, column=0, padx=2, pady=2, sticky="w")
         ttk.Entry(self.frame, textvariable=self.dwell_var, width=7).grid(row=row, column=1, padx=2, pady=2)
-        trigger_frame = ttk.Frame(self.frame)
-        trigger_frame.grid(row=row, column=2, columnspan=2, padx=2, pady=2, sticky="w")
-        ttk.Label(trigger_frame, text="Trig/point").pack(side="left")
-        ttk.Entry(trigger_frame, textvariable=self.trigger_count_var, width=7).pack(side="left", padx=(4, 0))
-        ttk.Label(self.frame, text="Path: X+ / return / Y+").grid(row=row, column=4, columnspan=2, padx=4, pady=2,
-                                                                  sticky="w")
+        freq_frame = ttk.Frame(self.frame)
+        freq_frame.grid(row=row, column=2, columnspan=4, padx=2, pady=2, sticky="w")
+        ttk.Label(freq_frame, text="Freq MHz").pack(side="left")
+        ttk.Entry(freq_frame, textvariable=self.freq_start_mhz_var, width=7).pack(side="left", padx=(4, 0))
+        ttk.Label(freq_frame, text="to").pack(side="left", padx=(4, 0))
+        ttk.Entry(freq_frame, textvariable=self.freq_stop_mhz_var, width=7).pack(side="left", padx=(4, 0))
+        ttk.Label(freq_frame, text="step kHz").pack(side="left", padx=(8, 0))
+        ttk.Entry(freq_frame, textvariable=self.freq_step_khz_var, width=7).pack(side="left", padx=(4, 0))
+        # Repeated sampling at one point is temporarily disabled.
+        # trigger_frame = ttk.Frame(self.frame)
+        # trigger_frame.grid(row=row, column=2, columnspan=2, padx=2, pady=2, sticky="w")
+        # ttk.Label(trigger_frame, text="Trig/point").pack(side="left")
+        # ttk.Entry(trigger_frame, textvariable=self.trigger_count_var, width=7).pack(side="left", padx=(4, 0))
 
         row += 1
         ttk.Button(self.frame, text="Start Scan", command=self.start_scan).grid(row=row, column=2, padx=4, pady=5,
                                                                                 sticky="ew")
         ttk.Button(self.frame, text="Stop Scan", command=self.stop_scan).grid(row=row, column=3, padx=4, pady=5,
                                                                               sticky="ew")
+        ttk.Label(self.frame, text="Path: X+ / return / Y+").grid(row=row, column=4, columnspan=2, padx=4, pady=5,
+                                                                  sticky="w")
 
         row += 1
         ttk.Label(
@@ -110,6 +125,27 @@ class ScanPanel:
         if str(value) != text:
             raise ValueError(f"Invalid value for {name}: must be an integer")
         return value
+
+    def _build_frequency_list_hz(self):
+        freq_start_mhz = self._get_float(self.freq_start_mhz_var, "Freq Start MHz")
+        freq_stop_mhz = self._get_float(self.freq_stop_mhz_var, "Freq Stop MHz")
+        freq_step_khz = self._get_float(self.freq_step_khz_var, "Freq Step kHz")
+
+        if freq_start_mhz <= 0:
+            raise ValueError("Freq Start must be positive.")
+        if freq_stop_mhz < freq_start_mhz:
+            raise ValueError("Freq Stop must be >= Freq Start.")
+        if freq_step_khz <= 0:
+            raise ValueError("Freq Step must be positive.")
+
+        start_hz = freq_start_mhz * 1e6
+        stop_hz = freq_stop_mhz * 1e6
+        step_hz = freq_step_khz * 1e3
+        frequencies_hz = np.arange(start_hz, stop_hz + step_hz * 1e-9, step_hz, dtype=float)
+
+        if len(frequencies_hz) == 0:
+            raise ValueError("Frequency list is empty.")
+        return frequencies_hz
 
     # ============================================================
     # Actions
@@ -216,7 +252,9 @@ class ScanPanel:
             y_step = self._get_float(self.y_step_var, "Y Step")
 
             dwell_s = self._get_float(self.dwell_var, "Dwell")
-            trigger_count = self._get_int(self.trigger_count_var, "Trig/point")
+            frequencies_hz = self._build_frequency_list_hz()
+            # Repeated sampling at one point is temporarily disabled.
+            # trigger_count = self._get_int(self.trigger_count_var, "Trig/point")
 
             if x_step <= 0:
                 raise ValueError("X Step must be positive.")
@@ -226,8 +264,9 @@ class ScanPanel:
                 raise ValueError("X Stop must be >= X Start.")
             if y_stop < y_start:
                 raise ValueError("Y Stop must be >= Y Start.")
-            if trigger_count < 1 or trigger_count > 32:
-                raise ValueError("Trig/point must be an integer from 1 to 32.")
+            # Repeated sampling at one point is temporarily disabled.
+            # if trigger_count < 1 or trigger_count > 32:
+            #     raise ValueError("Trig/point must be an integer from 1 to 32.")
 
             if self.scan_controller is not None and self.scan_controller.is_running:
                 raise RuntimeError("A scan is already running.")
@@ -248,7 +287,8 @@ class ScanPanel:
             self.log(
                 f"[SCAN] Start requested: X {x_start}->{x_stop} step {x_step}; "
                 f"Y {y_start}->{y_stop} step {y_step}; dwell={dwell_s}s; "
-                f"trig/point={trigger_count}"
+                f"freq/point={len(frequencies_hz)}; "
+                f"freq={frequencies_hz[0] / 1e6:.6f}->{frequencies_hz[-1] / 1e6:.6f} MHz"
             )
             self.log("[SCAN] Make sure AFG trigger source is BUS and burst setup is already applied.")
 
@@ -260,7 +300,7 @@ class ScanPanel:
                 y_stop=y_stop,
                 y_step=y_step,
                 dwell_s=dwell_s,
-                trigger_count=trigger_count,
+                frequencies_hz=frequencies_hz,
                 verbose=True,
             )
             self.log("Scan thread started.")
