@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import os
 import time
@@ -89,7 +89,7 @@ class PicoController:
         self._channels_to_buffer: List[str] = []    # same as _channels_for_run here
 
         # stable workaround
-        self.sleep_after_arm_s: float = 0.005
+        self.sleep_after_arm_s: float = 0.002
 
         # save / result
         self.save_dir: Optional[str] = None
@@ -654,3 +654,4 @@ class PicoController:
             )
 
         return saved_paths
+

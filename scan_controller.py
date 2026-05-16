@@ -115,7 +115,7 @@ class ScanController:
                 self.log("[SCAN] Scan stopped by user.")
                 return
 
-            if verbose:
+            if verbose and (freq_index == 1 or freq_index == len(frequencies_hz)):
                 self.log(
                     f"[SCAN] Point #{point_index}, frequency {freq_index}/{len(frequencies_hz)}: "
                     f"{frequency_hz / 1e6:.6f} MHz."
