@@ -24,7 +24,7 @@ class StagePanel:
         self.pos1_var = tk.StringVar(value="Axis1: --- mm (not initialized)")
         self.pos2_var = tk.StringVar(value="Axis2: --- mm (not initialized)")
 
-        self.frame = ttk.LabelFrame(parent, text="Stage Control", padding=10)
+        self.frame = ttk.LabelFrame(parent, text="🧭 Stage Control", padding=10)
         self.frame.pack(fill="x", pady=(0, 10))
 
         self._build()
@@ -34,8 +34,8 @@ class StagePanel:
 
         ttk.Label(frame, text="COM Port").grid(row=0, column=0, sticky="w", padx=5, pady=5)
         ttk.Entry(frame, textvariable=self.stage_port_var, width=12).grid(row=0, column=1, sticky="w", padx=5, pady=5)
-        ttk.Button(frame, text="Connect", command=self.connect_stage).grid(row=0, column=2, padx=5, pady=5)
-        ttk.Button(frame, text="Disconnect", command=self.disconnect_stage).grid(row=0, column=3, padx=5, pady=5)
+        ttk.Button(frame, text="🔌 Connect", command=self.connect_stage).grid(row=0, column=2, padx=5, pady=5)
+        ttk.Button(frame, text="⏏ Disconnect", command=self.disconnect_stage).grid(row=0, column=3, padx=5, pady=5)
 
         ttk.Label(frame, text="Axis").grid(row=1, column=0, sticky="w", padx=5, pady=5)
         ttk.Radiobutton(frame, text="Axis 1", variable=self.axis_var, value=1).grid(row=1, column=1, sticky="w", padx=5, pady=5)
@@ -43,8 +43,8 @@ class StagePanel:
 
         ttk.Label(frame, text="Relative Move (mm)").grid(row=2, column=0, sticky="w", padx=5, pady=5)
         ttk.Entry(frame, textvariable=self.move_rel_mm_var, width=12).grid(row=2, column=1, sticky="w", padx=5, pady=5)
-        ttk.Button(frame, text="Move +", command=self.move_rel_positive).grid(row=2, column=2, padx=5, pady=5)
-        ttk.Button(frame, text="Move -", command=self.move_rel_negative).grid(row=2, column=3, padx=5, pady=5)
+        ttk.Button(frame, text="→ Move +", command=self.move_rel_positive).grid(row=2, column=2, padx=5, pady=5)
+        ttk.Button(frame, text="← Move -", command=self.move_rel_negative).grid(row=2, column=3, padx=5, pady=5)
 
         ttk.Label(frame, text="Minimum command step: 0.001 mm", foreground="gray").grid(
             row=3, column=0, columnspan=4, sticky="w", padx=5, pady=(0, 5)
@@ -59,16 +59,16 @@ class StagePanel:
         ttk.Label(frame, text="Rate").grid(row=4, column=4, sticky="w", padx=5, pady=5)
         ttk.Entry(frame, textvariable=self.rate_var, width=10).grid(row=4, column=5, sticky="w", padx=5, pady=5)
 
-        ttk.Button(frame, text="Set Speed Axis1", command=lambda: self.set_speed(1)).grid(row=5, column=1, padx=5, pady=5)
-        ttk.Button(frame, text="Set Speed Axis2", command=lambda: self.set_speed(2)).grid(row=5, column=2, padx=5, pady=5)
+        ttk.Button(frame, text="⚙ Set Speed Axis1", command=lambda: self.set_speed(1)).grid(row=5, column=1, padx=5, pady=5)
+        ttk.Button(frame, text="⚙ Set Speed Axis2", command=lambda: self.set_speed(2)).grid(row=5, column=2, padx=5, pady=5)
 
-        ttk.Button(frame, text="Home+ & Set Zero", command=self.home_plus_set_zero).grid(row=6, column=0, padx=5, pady=5)
-        ttk.Button(frame, text="Home-", command=self.home_minus).grid(row=6, column=1, padx=5, pady=5)
-        ttk.Button(frame, text="Stop", command=self.stop_stage).grid(row=6, column=2, padx=5, pady=5)
-        ttk.Button(frame, text="Refresh Status", command=self.refresh_status).grid(row=6, column=3, padx=5, pady=5)
+        ttk.Button(frame, text="⌂ Home+ & Set Zero", command=self.home_plus_set_zero).grid(row=6, column=0, padx=5, pady=5)
+        ttk.Button(frame, text="⌂ Home-", command=self.home_minus).grid(row=6, column=1, padx=5, pady=5)
+        ttk.Button(frame, text="■ Stop", command=self.stop_stage).grid(row=6, column=2, padx=5, pady=5)
+        ttk.Button(frame, text="⟳ Refresh Status", command=self.refresh_status).grid(row=6, column=3, padx=5, pady=5)
 
-        ttk.Button(frame, text="Set Current as Zero", command=self.set_current_as_zero).grid(row=7, column=0, padx=5, pady=5)
-        ttk.Button(frame, text="Clear Zero", command=self.clear_zero).grid(row=7, column=1, padx=5, pady=5)
+        ttk.Button(frame, text="⊙ Set Current as Zero", command=self.set_current_as_zero).grid(row=7, column=0, padx=5, pady=5)
+        ttk.Button(frame, text="⌫ Clear Zero", command=self.clear_zero).grid(row=7, column=1, padx=5, pady=5)
 
         ttk.Label(frame, text="Controller Status").grid(row=8, column=0, sticky="w", padx=5, pady=5)
         ttk.Label(frame, textvariable=self.status_var, width=58).grid(row=8, column=1, columnspan=5, sticky="w", padx=5, pady=5)

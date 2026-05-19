@@ -16,6 +16,23 @@ class AppContext:
         self.last_pico_meta = None
         self.last_pico_update_id = 1
 
+        self.scan_progress = {
+            "status": "idle",
+            "current_x_mm": None,
+            "current_y_mm": None,
+            "current_point_index": 0,
+            "completed_points": 0,
+            "total_points": 0,
+            "completed_captures": 0,
+            "total_captures": 0,
+            "current_frequency_index": 0,
+            "frequency_count": 0,
+            "elapsed_s": 0.0,
+            "eta_s": None,
+            "message": "Idle",
+        }
+        self.scan_progress_update_id = 0
+
         # software-tracked stage position in mm
         self.stage_x_mm = None
         self.stage_y_mm = None

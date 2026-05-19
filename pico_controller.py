@@ -37,17 +37,18 @@ class PicoController:
     Generic PicoScope controller for block capture.
 
     Current stable strategy:
-    - fixed 8-bit mode
+    - selectable 8-bit / 12-bit mode
     - trigger source can be A/B/C/D
     - capture channels can be one or more of A/B/C/D
     - avoid is_ready() loop
     - use sleep after arm, then get_values()
     """
 
-    FIXED_RESOLUTION_BITS = 8
+    DEFAULT_RESOLUTION_BITS = 8
 
     def __init__(self):
         self.scope = None
+        self._connected = False
 
         # state
         self._configured = False
@@ -64,6 +65,7 @@ class PicoController:
         }
         self.coupling: str = "DC"
 
+        self.resolution_bits: int = self.DEFAULT_RESOLUTION_BITS
         self.sample_rate_mhz: float = 62.5
         self.duration_us: float = 50.0
         self.pre_trigger_us: float = 0.0
@@ -99,11 +101,31 @@ class PicoController:
     # connection
     # ------------------------------------------------------------------
     def connect(self):
-        if self.scope is not None:
+        if self.is_connected():
             return
-        self.scope = psdk.ps5000a()
-        self.scope.open_unit()
-        self._set_resolution_8bit()
+        self.disconnect()
+
+        scope = psdk.ps5000a()
+        try:
+            status = scope.open_unit()
+            accepted_statuses = {0, int(psdk.POWER_SOURCE.SUPPLY_NOT_CONNECTED)}
+            if int(status) not in accepted_statuses:
+                raise RuntimeError(f"PicoScope open_unit failed with status code {status}")
+            self.scope = scope
+            self._connected = True
+            if not self.scope.ping_unit():
+                raise RuntimeError("PicoScope did not respond after open_unit.")
+            self._set_resolution_bits(self.DEFAULT_RESOLUTION_BITS)
+        except Exception:
+            try:
+                scope.close_unit()
+            except Exception:
+                pass
+            self.scope = None
+            self._connected = False
+            self._configured = False
+            self._armed = False
+            raise
 
     def disconnect(self):
         if self.scope is not None:
@@ -112,6 +134,7 @@ class PicoController:
             except Exception:
                 pass
         self.scope = None
+        self._connected = False
         self._configured = False
         self._armed = False
         self._capture_buffers = {}
@@ -122,26 +145,50 @@ class PicoController:
         self.disconnect()
 
     def is_connected(self) -> bool:
-        return self.scope is not None
+        if self.scope is None or not self._connected:
+            return False
+        try:
+            if self.scope.ping_unit():
+                return True
+        except Exception:
+            pass
+        self._connected = False
+        self._configured = False
+        self._armed = False
+        return False
 
     def is_configured(self) -> bool:
         return self._configured
 
     def identify(self) -> str:
         self._require_scope()
+        if not self.is_connected():
+            raise RuntimeError("PicoScope is not connected.")
         try:
             serial = str(self.scope.get_unit_serial())
         except Exception:
-            serial = "serial unavailable"
-        return f"{serial} | fixed 8-bit"
+            serial = "PicoScope"
+        return f"{serial} | {self.resolution_bits}-bit"
 
     def _require_scope(self):
         if self.scope is None:
             raise RuntimeError("PicoScope is not connected.")
 
-    def _set_resolution_8bit(self):
+    def _resolution_enum(self, resolution_bits: int):
+        resolution_bits = int(resolution_bits)
+        mapping = {
+            8: psdk.RESOLUTION.BIT_8,
+            12: psdk.RESOLUTION.BIT_12,
+        }
+        if resolution_bits not in mapping:
+            raise ValueError("Only 8-bit and 12-bit are supported in this GUI")
+        return mapping[resolution_bits]
+
+    def _set_resolution_bits(self, resolution_bits: int):
         self._require_scope()
-        self.scope.set_device_resolution(psdk.RESOLUTION.BIT_8)
+        resolution_bits = int(resolution_bits)
+        self.scope.set_device_resolution(self._resolution_enum(resolution_bits))
+        self.resolution_bits = resolution_bits
 
     # ------------------------------------------------------------------
     # normalize helpers
@@ -214,21 +261,39 @@ class PicoController:
             raise ValueError(f"Unsupported trigger direction: {direction}")
         return mapping[s]
 
-    def _sample_rate_mhz_to_timebase(self, sample_rate_mhz: float) -> int:
-        """
-        Current validated mapping in your project:
-        62.5 MHz -> timebase 4
-        """
-        fs = float(sample_rate_mhz)
-        known = {
-            62.5: 4,
-        }
-        for k, tb in known.items():
-            if abs(fs - k) < 1e-9:
-                return tb
-        raise ValueError(
-            f"Currently only sample_rate_mhz=62.5 is validated in this controller; got {sample_rate_mhz}"
-        )
+    def _sample_rate_mhz_to_timebase(self, sample_rate_mhz: float) -> tuple[int, float]:
+        requested_interval_s = 1.0 / (float(sample_rate_mhz) * 1e6)
+        nearest = self.scope.get_nearest_sampling_interval(requested_interval_s)
+        timebase = int(nearest["timebase"])
+        actual_interval_s = float(nearest["actual_sample_interval"])
+        if actual_interval_s <= 0:
+            raise RuntimeError(f"Invalid actual sample interval returned by Pico: {actual_interval_s}")
+        return timebase, actual_interval_s
+
+    def _max_sample_rate_mhz(self, resolution_bits: int, enabled_channel_count: int) -> float:
+        resolution_bits = int(resolution_bits)
+        enabled_channel_count = int(enabled_channel_count)
+        if enabled_channel_count < 1:
+            raise ValueError("At least one channel must be enabled")
+
+        if resolution_bits == 8:
+            table = {1: 1000.0, 2: 500.0, 3: 250.0, 4: 250.0}
+        elif resolution_bits == 12:
+            table = {1: 500.0, 2: 250.0, 3: 125.0, 4: 125.0}
+        else:
+            raise ValueError("Only 8-bit and 12-bit are supported in this GUI")
+
+        return table.get(enabled_channel_count, table[4])
+
+    def _validate_sample_rate(self, sample_rate_mhz: float, resolution_bits: int, enabled_channel_count: int):
+        max_rate_mhz = self._max_sample_rate_mhz(resolution_bits, enabled_channel_count)
+        if sample_rate_mhz > max_rate_mhz + 1e-12:
+            raise ValueError(
+                f"Sample rate {sample_rate_mhz:g} MHz exceeds Pico limit for "
+                f"{resolution_bits}-bit with {enabled_channel_count} enabled channel(s): "
+                f"max {max_rate_mhz:g} MHz"
+            )
+        return max_rate_mhz
 
     def _parse_capture_channels(self, capture_channels: Any) -> List[str]:
         """
@@ -332,8 +397,9 @@ class PicoController:
             "save_channels": list(self.save_channels),
             "channel_ranges": dict(self.channel_ranges),
             "coupling": self.coupling,
-            "resolution_bits": self.FIXED_RESOLUTION_BITS,
+            "resolution_bits": self.resolution_bits,
             "sample_rate_mhz": self.sample_rate_mhz,
+            "actual_sample_rate_mhz": None if self.actual_fs_hz is None else self.actual_fs_hz / 1e6,
             "duration_us": self.duration_us,
             "pre_trigger_us": self.pre_trigger_us,
             "post_trigger_us": self.post_trigger_us,
@@ -355,6 +421,7 @@ class PicoController:
         capture_channels: Any,
         channel_ranges: Optional[Dict[str, str]] = None,
         coupling: str = "DC",
+        resolution_bits: int = 8,
         sample_rate_mhz: float = 62.5,
         duration_us: float = 50.0,
         pre_trigger_us: float = 0.0,
@@ -365,8 +432,8 @@ class PicoController:
         vrange: Optional[str] = None,
     ) -> Dict[str, Any]:
         self._require_scope()
-        self._set_resolution_8bit()
 
+        resolution_bits = int(resolution_bits)
         sample_rate_mhz = float(sample_rate_mhz)
         duration_us = float(duration_us)
         pre_trigger_us = float(pre_trigger_us)
@@ -400,24 +467,17 @@ class PicoController:
         self.trigger_threshold_mv = trigger_threshold_mv
         self.auto_trigger_us = auto_trigger_us
 
-        self.timebase = self._sample_rate_mhz_to_timebase(self.sample_rate_mhz)
-
-        requested_fs_hz = self.sample_rate_mhz * 1e6
-        self.actual_fs_hz = requested_fs_hz
-        self.dt_s = 1.0 / self.actual_fs_hz
-
-        self.samples = max(1, int(round(self.total_window_us * 1e-6 / self.dt_s)))
-
-        if self.total_window_us > 0:
-            self.pre_trigger_percent = int(round(100.0 * self.pre_trigger_us / self.total_window_us))
-            self.pre_trigger_percent = max(0, min(95, self.pre_trigger_percent))
-        else:
-            self.pre_trigger_percent = 0
-
         self.scope.set_all_channels_off()
+
+        self._set_resolution_bits(resolution_bits)
 
         self._channels_for_run = self._build_channels_for_run()
         self._channels_to_buffer = list(self._channels_for_run)
+        self._validate_sample_rate(
+            sample_rate_mhz=self.sample_rate_mhz,
+            resolution_bits=self.resolution_bits,
+            enabled_channel_count=len(self._channels_for_run),
+        )
 
         coupling_enum = self._normalize_coupling(self.coupling)
 
@@ -432,6 +492,18 @@ class PicoController:
                 offset=0.0,
                 probe_scale=1.0,
             )
+
+        self.timebase, actual_interval_s = self._sample_rate_mhz_to_timebase(self.sample_rate_mhz)
+
+        self.dt_s = actual_interval_s
+        self.actual_fs_hz = 1.0 / self.dt_s
+        self.samples = max(1, int(round(self.total_window_us * 1e-6 / self.dt_s)))
+
+        if self.total_window_us > 0:
+            self.pre_trigger_percent = int(round(100.0 * self.pre_trigger_us / self.total_window_us))
+            self.pre_trigger_percent = max(0, min(95, self.pre_trigger_percent))
+        else:
+            self.pre_trigger_percent = 0
 
         self.scope.set_simple_trigger(
             channel=self._channel_enum(self.trigger_source),
@@ -545,7 +617,7 @@ class PicoController:
                 "channels_for_run": list(self._channels_for_run),
                 "channel_ranges": dict(self.channel_ranges),
                 "coupling": self.coupling,
-                "resolution_bits": self.FIXED_RESOLUTION_BITS,
+                "resolution_bits": self.resolution_bits,
                 "requested_sample_rate_mhz": self.sample_rate_mhz,
                 "actual_sample_rate_mhz": None if self.actual_fs_hz is None else self.actual_fs_hz / 1e6,
                 "timebase": self.timebase,

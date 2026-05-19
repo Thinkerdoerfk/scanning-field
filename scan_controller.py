@@ -30,6 +30,7 @@ class ScanController:
         self._stop_requested = False
         self._scan_thread = None
         self._is_running = False
+        self._progress_start_time = None
 
     # ============================================================
     # Logging
@@ -51,6 +52,52 @@ class ScanController:
         self._stop_requested = True
         self.log("Scan stop requested.")
 
+    def _publish_progress(self, **updates):
+        progress = dict(getattr(self.ctx, "scan_progress", {}) or {})
+        progress.update(updates)
+        self.ctx.scan_progress = progress
+        self.ctx.scan_progress_update_id = getattr(self.ctx, "scan_progress_update_id", 0) + 1
+
+    def _publish_running_progress(
+        self,
+        current_x,
+        current_y,
+        current_point_index,
+        completed_points,
+        total_points,
+        current_frequency_index,
+        frequency_count,
+        message,
+    ):
+        elapsed_s = 0.0
+        if self._progress_start_time is not None:
+            elapsed_s = max(0.0, time.monotonic() - self._progress_start_time)
+
+        completed_captures = completed_points * frequency_count + max(0, current_frequency_index - 1)
+        total_captures = total_points * frequency_count
+        eta_s = None
+        if completed_captures > 0 and total_captures > completed_captures:
+            avg_s = elapsed_s / completed_captures
+            eta_s = avg_s * (total_captures - completed_captures)
+        elif total_captures > 0 and completed_captures >= total_captures:
+            eta_s = 0.0
+
+        self._publish_progress(
+            status="running",
+            current_x_mm=float(current_x),
+            current_y_mm=float(current_y),
+            current_point_index=int(current_point_index),
+            completed_points=int(completed_points),
+            total_points=int(total_points),
+            completed_captures=int(completed_captures),
+            total_captures=int(total_captures),
+            current_frequency_index=int(current_frequency_index),
+            frequency_count=int(frequency_count),
+            elapsed_s=float(elapsed_s),
+            eta_s=eta_s,
+            message=message,
+        )
+
     # ============================================================
     # Basic actions
     # ============================================================
@@ -61,6 +108,8 @@ class ScanController:
             y_mm: float,
             dwell_s: float = 0.0,
             frequencies_hz=None,
+            completed_points_before: int = 0,
+            total_points: int = 0,
             verbose: bool = True,
     ) -> None:
         """
@@ -114,6 +163,21 @@ class ScanController:
             if self._stop_requested:
                 self.log("[SCAN] Scan stopped by user.")
                 return
+
+            if total_points:
+                self._publish_running_progress(
+                    current_x=x_mm,
+                    current_y=y_mm,
+                    current_point_index=point_index,
+                    completed_points=completed_points_before,
+                    total_points=total_points,
+                    current_frequency_index=freq_index,
+                    frequency_count=len(frequencies_hz),
+                    message=(
+                        f"Point {point_index}/{total_points}, "
+                        f"freq {freq_index}/{len(frequencies_hz)}"
+                    ),
+                )
 
             if verbose and (freq_index == 1 or freq_index == len(frequencies_hz)):
                 self.log(
@@ -270,10 +334,28 @@ class ScanController:
             current_x = float(x_start)
             current_y = float(y_start)
             point_index = 1# number of points
+            total_points = int(len(xs) * len(ys))
+            self._progress_start_time = time.monotonic()
+            self._publish_progress(
+                status="running",
+                current_x_mm=current_x,
+                current_y_mm=current_y,
+                current_point_index=1 if total_points else 0,
+                completed_points=0,
+                total_points=total_points,
+                completed_captures=0,
+                total_captures=total_points * len(frequencies_hz),
+                current_frequency_index=0,
+                frequency_count=len(frequencies_hz),
+                elapsed_s=0.0,
+                eta_s=None,
+                message="Starting scan",
+            )
 
             for j, y in enumerate(ys):
                 if self._stop_requested:
                     self.log("Scan stopped by user.")
+                    self._publish_progress(status="stopped", message="Stopped by user")
                     return
 
                 # If current row is not the first row, move one step in y direction
@@ -291,8 +373,20 @@ class ScanController:
                 for i in range(len(xs)):
                     if self._stop_requested:
                         self.log("[SCAN] Scan stopped by user.")
+                        self._publish_progress(status="stopped", message="Stopped by user")
                         return
 
+                    completed_points = point_index - 1
+                    self._publish_running_progress(
+                        current_x=current_x,
+                        current_y=current_y,
+                        current_point_index=point_index,
+                        completed_points=completed_points,
+                        total_points=total_points,
+                        current_frequency_index=0,
+                        frequency_count=len(frequencies_hz),
+                        message=f"Point {point_index}/{total_points}",
+                    )
                     self.log(f"[SCAN] === Point: x={current_x:.3f} mm, y={current_y:.3f} mm ===")
                     self.trigger_here(
                         point_index=point_index,
@@ -300,7 +394,22 @@ class ScanController:
                         y_mm=current_y,
                         dwell_s=dwell_s,
                         frequencies_hz=frequencies_hz,
+                        completed_points_before=completed_points,
+                        total_points=total_points,
                         verbose=verbose,
+                    )
+                    if self._stop_requested:
+                        self._publish_progress(status="stopped", message="Stopped by user")
+                        return
+                    self._publish_running_progress(
+                        current_x=current_x,
+                        current_y=current_y,
+                        current_point_index=point_index,
+                        completed_points=point_index,
+                        total_points=total_points,
+                        current_frequency_index=len(frequencies_hz),
+                        frequency_count=len(frequencies_hz),
+                        message=f"Completed point {point_index}/{total_points}",
                     )
                     point_index += 1
 
@@ -329,6 +438,24 @@ class ScanController:
                 current_y = float(y_start)
 
             self.log("[SCAN] Scan finished successfully. Returned to start point.")
+            elapsed_s = 0.0
+            if self._progress_start_time is not None:
+                elapsed_s = max(0.0, time.monotonic() - self._progress_start_time)
+            self._publish_progress(
+                status="finished",
+                current_x_mm=float(x_start),
+                current_y_mm=float(y_start),
+                current_point_index=total_points,
+                completed_points=total_points,
+                total_points=total_points,
+                completed_captures=total_points * len(frequencies_hz),
+                total_captures=total_points * len(frequencies_hz),
+                current_frequency_index=len(frequencies_hz),
+                frequency_count=len(frequencies_hz),
+                elapsed_s=elapsed_s,
+                eta_s=0.0,
+                message="Finished",
+            )
 
         finally:
             self._is_running = False
@@ -342,6 +469,7 @@ class ScanController:
         except Exception as e:
             self.log(f"[SCAN] Scan crashed: {e}")
             self.log(traceback.format_exc())
+            self._publish_progress(status="error", message=str(e), eta_s=None)
             self._is_running = False
 
     def start_scan_thread(

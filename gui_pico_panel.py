@@ -24,12 +24,13 @@ class PicoPanel(ttk.LabelFrame):
     """
 
     def __init__(self, parent, ctx, log_func=None):
-        super().__init__(parent, text="PicoScope", padding=8)
+        super().__init__(parent, text="📟 PicoScope", padding=8)
         self.ctx = ctx
         self.log = log_func if log_func is not None else print
 
         self._capture_thread = None
         self._capture_running = False
+        self._last_capture_result = None
         self._last_seen_update_id = getattr(self.ctx, "last_pico_update_id", 0)
 
         self._build_vars()
@@ -56,6 +57,7 @@ class PicoPanel(ttk.LabelFrame):
         self.var_range_C = tk.StringVar(value="V2")
         self.var_range_D = tk.StringVar(value="V2")
         self.var_coupling = tk.StringVar(value="DC")
+        self.var_resolution_bits = tk.StringVar(value="8")
         self.var_sample_rate_mhz = tk.StringVar(value="62.5")
         self.var_duration_us = tk.StringVar(value="50.0")
         self.var_pre_trigger_us = tk.StringVar(value="0.0")
@@ -80,13 +82,13 @@ class PicoPanel(ttk.LabelFrame):
         ttk.Label(self, textvariable=self.var_idn, width=40).grid(row=row, column=1, columnspan=3, sticky="w", padx=4)
 
         row += 1
-        ttk.Button(self, text="Connect", command=self.on_connect).grid(row=row, column=0, sticky="ew", pady=4)
-        ttk.Button(self, text="Disconnect", command=self.on_disconnect).grid(row=row, column=1, sticky="ew", pady=4)
-        ttk.Button(self, text="Apply Config", command=self.on_apply_config).grid(row=row, column=2, sticky="ew", pady=4)
-        ttk.Button(self, text="Capture Test", command=self.capture_test).grid(row=row, column=3, sticky="ew", pady=4)
+        ttk.Button(self, text="🔌 Connect", command=self.on_connect).grid(row=row, column=0, sticky="ew", pady=4)
+        ttk.Button(self, text="⏏ Disconnect", command=self.on_disconnect).grid(row=row, column=1, sticky="ew", pady=4)
+        ttk.Button(self, text="⚙ Apply Config", command=self.on_apply_config).grid(row=row, column=2, sticky="ew", pady=4)
+        ttk.Button(self, text="🧪 Capture Test", command=self.capture_test).grid(row=row, column=3, sticky="ew", pady=4)
 
         row += 1
-        cfg = ttk.LabelFrame(self, text="Configuration", padding=6)
+        cfg = ttk.LabelFrame(self, text="🛠 Configuration", padding=6)
         cfg.grid(row=row, column=0, columnspan=4, sticky="nsew", pady=6)
 
         r = 0
@@ -149,14 +151,23 @@ class PicoPanel(ttk.LabelFrame):
             state="readonly",
         ).grid(row=r, column=1, sticky="ew", padx=4)
 
+        ttk.Label(cfg, text="Resolution").grid(row=r, column=2, sticky="w")
+        ttk.Combobox(
+            cfg,
+            textvariable=self.var_resolution_bits,
+            values=["8", "12"],
+            width=15,
+            state="readonly",
+        ).grid(row=r, column=3, sticky="ew", padx=4)
+
         r += 1
         ttk.Label(cfg, text="Sample rate (MHz)").grid(row=r, column=0, sticky="w")
         ttk.Combobox(
             cfg,
             textvariable=self.var_sample_rate_mhz,
-            values=["62.5"],
+            values=["1000", "500", "250", "125", "62.5", "50", "25", "10", "5", "2.5", "1"],
             width=15,
-            state="readonly",
+            state="normal",
         ).grid(row=r, column=1, sticky="ew", padx=4)
 
         ttk.Label(cfg, text="Duration (us)").grid(row=r, column=2, sticky="w")
@@ -196,17 +207,17 @@ class PicoPanel(ttk.LabelFrame):
             cfg.columnconfigure(c, weight=1)
 
         row += 1
-        savef = ttk.LabelFrame(self, text="Save", padding=6)
+        savef = ttk.LabelFrame(self, text="💾 Save", padding=6)
         savef.grid(row=row, column=0, columnspan=4, sticky="nsew", pady=6)
 
         ttk.Label(savef, text="Folder").grid(row=0, column=0, sticky="w")
         ttk.Entry(savef, textvariable=self.var_save_dir, width=50).grid(row=0, column=1, sticky="ew", padx=4)
-        ttk.Button(savef, text="Choose Save Folder", command=self.on_choose_save_dir).grid(row=0, column=2, sticky="ew")
+        ttk.Button(savef, text="📁 Browse", command=self.on_choose_save_dir).grid(row=0, column=2, sticky="ew")
 
         savef.columnconfigure(1, weight=1)
 
         row += 1
-        plotf = ttk.LabelFrame(self, text="Waveform", padding=6)
+        plotf = ttk.LabelFrame(self, text="〰 Waveform", padding=6)
         plotf.grid(row=row, column=0, columnspan=4, sticky="nsew", pady=6)
         self.plot_frame = plotf
 
@@ -218,27 +229,19 @@ class PicoPanel(ttk.LabelFrame):
     # plot
     # ------------------------------------------------------------------
     def _build_plot(self):
-        self.fig = Figure(figsize=(10, 7), dpi=100)
+        self.fig = Figure(figsize=(12, 3.4), dpi=100, facecolor="#f8fafc")
 
-        self.axA = self.fig.add_subplot(2, 2, 1)
-        self.axB = self.fig.add_subplot(2, 2, 2)
-        self.axC = self.fig.add_subplot(2, 2, 3)
-        self.axD = self.fig.add_subplot(2, 2, 4)
+        self.ax_trigger = self.fig.add_subplot(1, 2, 1)
+        self.ax_capture = self.fig.add_subplot(1, 2, 2)
 
-        self.axes_map = {
-            "A": self.axA,
-            "B": self.axB,
-            "C": self.axC,
-            "D": self.axD,
-        }
+        self.axes_map = {}
 
         self.fig.subplots_adjust(
-            left=0.08,
-            right=0.98,
-            bottom=0.08,
-            top=0.93,
-            wspace=0.28,
-            hspace=0.40
+            left=0.07,
+            right=0.985,
+            bottom=0.14,
+            top=0.90,
+            wspace=0.22,
         )
 
         self.canvas = FigureCanvasTkAgg(self.fig, master=self.plot_frame)
@@ -248,18 +251,23 @@ class PicoPanel(ttk.LabelFrame):
         self._reset_plot()
 
     def _reset_plot(self):
-        for ch, ax in self.axes_map.items():
+        self.axes_map = {}
+        for ax, title in (
+            (self.ax_trigger, "Trigger channel"),
+            (self.ax_capture, "Capture channel(s)"),
+        ):
             ax.clear()
-            ax.set_title(f"Channel {ch}", fontsize=5)
-            ax.set_xlabel("Time (us)", fontsize=4)
-            ax.set_ylabel("Voltage (V)", fontsize=4)
-            ax.tick_params(axis="both", labelsize=4)
+            ax.set_facecolor("#ffffff")
+            ax.set_title(title, fontsize=11)
+            ax.set_xlabel("Time (us)", fontsize=10)
+            ax.set_ylabel("Voltage (V)", fontsize=10)
+            ax.tick_params(axis="both", labelsize=9)
             ax.grid(True)
             ax.text(
                 0.5, 0.5, "No Data",
                 ha="center", va="center",
                 transform=ax.transAxes,
-                fontsize=5
+                fontsize=10
             )
 
         self.canvas.draw_idle()
@@ -267,7 +275,6 @@ class PicoPanel(ttk.LabelFrame):
     def _get_display_channels(self, result_meta, signals_v):
         """
         Plot channels = trigger_source + capture_channels
-        unique, ordered as A/B/C/D display positions are fixed anyway
         """
         display = []
 
@@ -289,17 +296,93 @@ class PicoPanel(ttk.LabelFrame):
 
         return display
 
+    def _get_capture_channels_from_meta(self, result_meta, signals_v):
+        channels = []
+        for ch in result_meta.get("capture_channels", []):
+            ch = str(ch).strip().upper()
+            if ch in ("A", "B", "C", "D") and ch in signals_v and ch not in channels:
+                channels.append(ch)
+
+        if not channels and isinstance(signals_v, dict):
+            trigger_source = str(result_meta.get("trigger_source", "")).strip().upper()
+            for ch in signals_v.keys():
+                ch = str(ch).strip().upper()
+                if ch in ("A", "B", "C", "D") and ch != trigger_source and ch not in channels:
+                    channels.append(ch)
+        return channels
+
     def _plot_result(self, time_s, signals_v, meta=None):
         if meta is None:
             meta = {}
-
-        display_channels = self._get_display_channels(meta, signals_v)
 
         if time_s is None or signals_v is None:
             self._reset_plot()
             return
 
         t_us = np.asarray(time_s, dtype=float) * 1e6
+
+        trigger_source = str(meta.get("trigger_source", "")).strip().upper()
+        capture_channels = self._get_capture_channels_from_meta(meta, signals_v)
+        self.axes_map = {}
+
+        for ax in (self.ax_trigger, self.ax_capture):
+            ax.clear()
+            ax.set_facecolor("#ffffff")
+            ax.set_xlabel("Time (us)", fontsize=10)
+            ax.set_ylabel("Voltage (V)", fontsize=10)
+            ax.tick_params(axis="both", labelsize=9)
+            ax.grid(True)
+
+        if trigger_source in signals_v:
+            y = np.asarray(signals_v[trigger_source], dtype=float)
+            if y.ndim == 2:
+                y = y[-1]
+            self.ax_trigger.plot(t_us, y, linewidth=1.2, label=f"Trigger {trigger_source}")
+            self.ax_trigger.legend(fontsize=9, loc="upper right")
+            self.axes_map[trigger_source] = self.ax_trigger
+        else:
+            self.ax_trigger.text(
+                0.5, 0.5, "No trigger data",
+                ha="center", va="center",
+                transform=self.ax_trigger.transAxes,
+                fontsize=10,
+            )
+
+        self.ax_trigger.set_title(f"Trigger channel: {trigger_source or 'N/A'}", fontsize=11)
+
+        plotted_capture = False
+        for ch in capture_channels:
+            y = np.asarray(signals_v[ch], dtype=float)
+            if y.ndim == 2:
+                y = y[-1]
+            self.ax_capture.plot(t_us, y, linewidth=1.2, label=f"Channel {ch}")
+            self.axes_map[ch] = self.ax_capture
+            plotted_capture = True
+
+        if plotted_capture:
+            self.ax_capture.legend(fontsize=9, loc="upper right")
+        else:
+            self.ax_capture.text(
+                0.5, 0.5, "No capture data",
+                ha="center", va="center",
+                transform=self.ax_capture.transAxes,
+                fontsize=10,
+            )
+
+        self.ax_capture.set_title(
+            "Capture channel(s): " + (", ".join(capture_channels) if capture_channels else "N/A"),
+            fontsize=11,
+        )
+
+        self.fig.subplots_adjust(
+            left=0.07,
+            right=0.985,
+            bottom=0.14,
+            top=0.90,
+            wspace=0.22,
+        )
+        self.canvas.draw_idle()
+        return
 
         for ch, ax in self.axes_map.items():
             ax.clear()
@@ -435,6 +518,10 @@ class PicoPanel(ttk.LabelFrame):
         try:
             if self.ctx.pico is not None:
                 self.ctx.pico.disconnect()
+            self._last_capture_result = None
+            scan_panel = getattr(self.ctx, "scan_panel", None)
+            if scan_panel is not None:
+                scan_panel.set_distance_ready(False)
             self.var_status.set("Disconnected")
             self.var_idn.set("Not connected")
             self.log("[PICO] Disconnected")
@@ -454,6 +541,11 @@ class PicoPanel(ttk.LabelFrame):
             if self.ctx.pico is None or not self.ctx.pico.is_connected():
                 raise RuntimeError("PicoScope not connected")
 
+            self._last_capture_result = None
+            scan_panel = getattr(self.ctx, "scan_panel", None)
+            if scan_panel is not None:
+                scan_panel.set_distance_ready(False)
+
             capture_channels = self._parse_capture_channels()
             save_channels = self._parse_save_channels()
 
@@ -463,6 +555,7 @@ class PicoPanel(ttk.LabelFrame):
                 capture_channels=capture_channels,
                 channel_ranges=channel_ranges,
                 coupling=self.var_coupling.get(),
+                resolution_bits=int(self.var_resolution_bits.get()),
                 sample_rate_mhz=float(self.var_sample_rate_mhz.get()),
                 duration_us=float(self.var_duration_us.get()),
                 pre_trigger_us=float(self.var_pre_trigger_us.get()),
@@ -552,9 +645,13 @@ class PicoPanel(ttk.LabelFrame):
 
     def _on_capture_test_success(self, result, save_paths):
         try:
+            self._last_capture_result = result
             self.ctx.last_pico_time = result.time_s
             self.ctx.last_pico_signals = result.signals_v
             self.ctx.last_pico_meta = result.meta
+            scan_panel = getattr(self.ctx, "scan_panel", None)
+            if scan_panel is not None:
+                scan_panel.set_distance_ready(True)
 
             # 防止 last_pico_update_id = None 时出错
             current_id = getattr(self.ctx, "last_pico_update_id", None)
@@ -608,9 +705,16 @@ class PicoPanel(ttk.LabelFrame):
             try:
                 self.var_idn.set(self.ctx.pico.identify())
             except Exception:
-                self.var_idn.set("Connected")
+                connected = False
+                self.var_status.set("Disconnected")
+                self.var_idn.set("Not connected")
         else:
             self.var_idn.set("Not connected")
+
+        if not connected:
+            scan_panel = getattr(self.ctx, "scan_panel", None)
+            if scan_panel is not None:
+                scan_panel.set_distance_ready(False)
 
     def _poll_scan_waveform(self):
         try:

@@ -9,7 +9,7 @@ class AFGPanel:
         self.ctx = ctx
         self.log = log_func
 
-        self.frame = ttk.LabelFrame(parent, text="AFG Control")
+        self.frame = ttk.LabelFrame(parent, text="⚡ AFG Control")
         self.frame.pack(fill="x", padx=5, pady=5)
 
         self.resource_var = tk.StringVar(value="GPIB0::11::INSTR")
@@ -28,83 +28,68 @@ class AFGPanel:
         self._build()
 
     def _build(self):
-        # r is the row number of these buttons
+        for c in range(4):
+            self.frame.columnconfigure(c, weight=1)
+
         r = 0
-
         ttk.Label(self.frame, text="Resource").grid(row=r, column=0, sticky="w", padx=4, pady=3)
-        ttk.Entry(self.frame, textvariable=self.resource_var, width=18).grid(row=r, column=1, padx=4, pady=3)
-
+        ttk.Entry(self.frame, textvariable=self.resource_var, width=18).grid(row=r, column=1, sticky="ew", padx=4, pady=3)
         ttk.Label(self.frame, text="Channel").grid(row=r, column=2, sticky="w", padx=4, pady=3)
-        ttk.Combobox(
-            self.frame,
-            textvariable=self.channel_var,
-            values=["1", "2"],
-            width=6,
-            state="readonly",
-        ).grid(row=r, column=3, padx=4, pady=3)
+        ttk.Combobox(self.frame, textvariable=self.channel_var, values=["1", "2"], width=6, state="readonly").grid(
+            row=r, column=3, sticky="ew", padx=4, pady=3
+        )
 
-        ttk.Button(self.frame, text="Connect AFG", command=self.on_connect).grid(row=r, column=4, padx=4, pady=3)
-        ttk.Button(self.frame, text="Disconnect AFG", command=self.on_disconnect).grid(row=r, column=5, padx=4, pady=3)
+        r += 1
+        ttk.Button(self.frame, text="🔌 Connect AFG", command=self.on_connect).grid(row=r, column=0, columnspan=2, sticky="ew", padx=4, pady=3)
+        ttk.Button(self.frame, text="⏏ Disconnect AFG", command=self.on_disconnect).grid(row=r, column=2, columnspan=2, sticky="ew", padx=4, pady=3)
 
         r += 1
         ttk.Label(self.frame, text="Freq (Hz)").grid(row=r, column=0, sticky="w", padx=4, pady=3)
-        ttk.Entry(self.frame, textvariable=self.freq_var, width=12).grid(row=r, column=1, padx=4, pady=3)
-
+        ttk.Entry(self.frame, textvariable=self.freq_var, width=12).grid(row=r, column=1, sticky="ew", padx=4, pady=3)
         ttk.Label(self.frame, text="Amp (Vpp)").grid(row=r, column=2, sticky="w", padx=4, pady=3)
-        ttk.Entry(self.frame, textvariable=self.amp_var, width=10).grid(row=r, column=3, padx=4, pady=3)
+        ttk.Entry(self.frame, textvariable=self.amp_var, width=10).grid(row=r, column=3, sticky="ew", padx=4, pady=3)
 
-        ttk.Label(self.frame, text="Offset (V)").grid(row=r, column=4, sticky="w", padx=4, pady=3)
-        ttk.Entry(self.frame, textvariable=self.offset_var, width=10).grid(row=r, column=5, padx=4, pady=3)
+        r += 1
+        ttk.Label(self.frame, text="Offset (V)").grid(row=r, column=0, sticky="w", padx=4, pady=3)
+        ttk.Entry(self.frame, textvariable=self.offset_var, width=10).grid(row=r, column=1, sticky="ew", padx=4, pady=3)
+        ttk.Button(self.frame, text="〰 Apply Sine", command=self.on_apply_sine).grid(row=r, column=2, sticky="ew", padx=4, pady=3)
+        ttk.Button(self.frame, text="⏻ Output ON", command=self.on_output_on).grid(row=r, column=3, sticky="ew", padx=4, pady=3)
 
-        ttk.Button(self.frame, text="Apply Sine", command=self.on_apply_sine).grid(row=r, column=6, padx=4, pady=3)
-        ttk.Button(self.frame, text="Output ON", command=self.on_output_on).grid(row=r, column=7, padx=4, pady=3)
-        ttk.Button(self.frame, text="Output OFF", command=self.on_output_off).grid(row=r, column=8, padx=4, pady=3)
+        r += 1
+        ttk.Button(self.frame, text="■ Output OFF", command=self.on_output_off).grid(row=r, column=0, columnspan=4, sticky="ew", padx=4, pady=3)
 
         r += 1
         ttk.Label(self.frame, text="Burst Cycles").grid(row=r, column=0, sticky="w", padx=4, pady=3)
-        ttk.Entry(self.frame, textvariable=self.cycles_var, width=10).grid(row=r, column=1, padx=4, pady=3)
-
+        ttk.Entry(self.frame, textvariable=self.cycles_var, width=10).grid(row=r, column=1, sticky="ew", padx=4, pady=3)
         ttk.Label(self.frame, text="Burst Delay (s)").grid(row=r, column=2, sticky="w", padx=4, pady=3)
-        ttk.Entry(self.frame, textvariable=self.delay_var, width=10).grid(row=r, column=3, padx=4, pady=3)
+        ttk.Entry(self.frame, textvariable=self.delay_var, width=10).grid(row=r, column=3, sticky="ew", padx=4, pady=3)
 
-        ttk.Label(self.frame, text="Burst Mode").grid(row=r, column=4, sticky="w", padx=4, pady=3)
-        ttk.Combobox(
-            self.frame,
-            textvariable=self.burst_mode_var,
-            values=["TRIG", "GAT"],
-            width=8,
-            state="readonly",
-        ).grid(row=r, column=5, padx=4, pady=3)
+        r += 1
+        ttk.Label(self.frame, text="Burst Mode").grid(row=r, column=0, sticky="w", padx=4, pady=3)
+        ttk.Combobox(self.frame, textvariable=self.burst_mode_var, values=["TRIG", "GAT"], width=8, state="readonly").grid(
+            row=r, column=1, sticky="ew", padx=4, pady=3
+        )
+        ttk.Label(self.frame, text="Trig Out Mode").grid(row=r, column=2, sticky="w", padx=4, pady=3)
+        ttk.Combobox(self.frame, textvariable=self.trigger_out_mode_var, values=["TRIG", "SYNC"], width=8, state="readonly").grid(
+            row=r, column=3, sticky="ew", padx=4, pady=3
+        )
 
-        ttk.Label(self.frame, text="Trig Out Mode").grid(row=r, column=6, sticky="w", padx=4, pady=3)
-        ttk.Combobox(
-            self.frame,
-            textvariable=self.trigger_out_mode_var,
-            values=["TRIG", "SYNC"],
-            width=8,
-            state="readonly",
-        ).grid(row=r, column=7, padx=4, pady=3)
-
-        ttk.Button(self.frame, text="Apply Trigger Setup", command=self.on_apply_trigger_setup).grid(
-            row=r, column=8, padx=4, pady=3
+        r += 1
+        ttk.Button(self.frame, text="⚙ Apply Trigger Setup", command=self.on_apply_trigger_setup).grid(
+            row=r, column=0, columnspan=4, sticky="ew", padx=4, pady=3
         )
 
         r += 1
         ttk.Label(self.frame, text="Trigger Source").grid(row=r, column=0, sticky="w", padx=4, pady=3)
-        ttk.Combobox(
-            self.frame,
-            textvariable=self.trigger_source_var,
-            values=["BUS", "EXT", "TIM"],
-            width=8,
-            state="readonly",
-        ).grid(row=r, column=1, padx=4, pady=3)
-
-        ttk.Button(self.frame, text="Apply Trigger Source", command=self.on_apply_trigger_source).grid(
-            row=r, column=2, padx=4, pady=3
+        ttk.Combobox(self.frame, textvariable=self.trigger_source_var, values=["BUS", "EXT", "TIM"], width=8, state="readonly").grid(
+            row=r, column=1, sticky="ew", padx=4, pady=3
         )
-        ttk.Button(self.frame, text="Test Burst", command=self.on_test_burst).grid(row=r, column=3, padx=4, pady=3)
-        ttk.Button(self.frame, text="Disable Burst", command=self.on_disable_burst).grid(row=r, column=4, padx=4, pady=3)
-        ttk.Button(self.frame, text="Refresh AFG Status", command=self.on_refresh_status).grid(row=r, column=5, padx=4, pady=3)
+        ttk.Button(self.frame, text="↦ Apply Source", command=self.on_apply_trigger_source).grid(row=r, column=2, sticky="ew", padx=4, pady=3)
+        ttk.Button(self.frame, text="▶ Test Burst", command=self.on_test_burst).grid(row=r, column=3, sticky="ew", padx=4, pady=3)
+
+        r += 1
+        ttk.Button(self.frame, text="□ Disable Burst", command=self.on_disable_burst).grid(row=r, column=0, columnspan=2, sticky="ew", padx=4, pady=3)
+        ttk.Button(self.frame, text="⟳ Refresh AFG Status", command=self.on_refresh_status).grid(row=r, column=2, columnspan=2, sticky="ew", padx=4, pady=3)
 
     def _get_afg(self) -> AFGController:
         afg = self.ctx.afg
