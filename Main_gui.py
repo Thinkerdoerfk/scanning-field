@@ -7,6 +7,7 @@ from gui_stage_panel import StagePanel
 from gui_afg_panel import AFGPanel
 from gui_pico_panel import PicoPanel
 from gui_scan_panel import ScanPanel
+from gui_realtime_postprocess_panel import RealtimePostprocessPanel
 
 
 class MainGUIApp:
@@ -17,30 +18,70 @@ class MainGUIApp:
 
         screen_w = self.root.winfo_screenwidth()
         screen_h = self.root.winfo_screenheight()
-
         w = min(1500, screen_w - 80)
         h = min(900, screen_h - 100)
-
         self.root.geometry(f"{w}x{h}")
         self.root.minsize(900, 620)
 
         self.ctx = AppContext()
+        self._scrollregion_after = None
+        self._paned_height = None
 
         main = self._build_scrollable_main(root)
-
         main.grid_rowconfigure(0, weight=1)
-        main.grid_columnconfigure(0, weight=0)  # 左边相对固定
-        main.grid_columnconfigure(1, weight=1)  # 右边优先扩展
+        main.grid_columnconfigure(0, weight=1)
 
-        left = ttk.Frame(main)
-        left.grid(row=0, column=0, sticky="nsew")
+        paned = tk.PanedWindow(
+            main,
+            orient=tk.HORIZONTAL,
+            sashwidth=7,
+            sashrelief=tk.RAISED,
+            bg=self.colors["panel_border"],
+            bd=0,
+            opaqueresize=False,
+        )
+        self.main_paned = paned
+        paned.grid(row=0, column=0, sticky="nsew")
+
+        control_area = ttk.Frame(paned)
+        postprocess_area = ttk.Frame(paned)
+        self.control_area = control_area
+        self.postprocess_area = postprocess_area
+        paned.add(control_area, minsize=640, stretch="always")
+        paned.add(postprocess_area, minsize=24, stretch="never", width=32)
+
+        control_area.grid_rowconfigure(0, weight=1)
+        control_area.grid_columnconfigure(0, weight=1)
+
+        control_paned = tk.PanedWindow(
+            control_area,
+            orient=tk.HORIZONTAL,
+            sashwidth=6,
+            sashrelief=tk.RAISED,
+            bg=self.colors["panel_border"],
+            bd=0,
+            opaqueresize=False,
+        )
+        self.control_paned = control_paned
+        control_paned.grid(row=0, column=0, sticky="nsew")
+
+        left = ttk.Frame(control_paned)
+        middle = ttk.Frame(control_paned)
+        self.left_area = left
+        self.middle_area = middle
+        control_paned.add(left, minsize=300, stretch="never")
+        control_paned.add(middle, minsize=420, stretch="always")
+
         left.grid_rowconfigure(0, weight=0)
         left.grid_rowconfigure(1, weight=0)
         left.grid_rowconfigure(2, weight=1)
         left.grid_columnconfigure(0, weight=1)
 
-        right = ttk.Frame(main)
-        right.grid(row=0, column=1, sticky="nsew", padx=(10, 0))
+        middle.grid_rowconfigure(0, weight=1)
+        middle.grid_columnconfigure(0, weight=1)
+        right = ttk.Frame(middle)
+        self.right_area = right
+        right.grid(row=0, column=0, sticky="nsew", padx=(10, 0))
         right.grid_rowconfigure(0, weight=0)
         right.grid_rowconfigure(1, weight=1)
         right.grid_columnconfigure(0, weight=1)
@@ -58,9 +99,18 @@ class MainGUIApp:
 
         self.scan_panel = ScanPanel(right, self.ctx, self.log_panel.log)
         self.pico_panel = PicoPanel(right, self.ctx, self.log_panel.log)
+        self.realtime_postprocess_panel = RealtimePostprocessPanel(
+            postprocess_area,
+            self.ctx,
+            self.log_panel.log,
+        )
+        self.realtime_postprocess_panel.pack(fill="both", expand=True)
+
         self.ctx.scan_panel = self.scan_panel
         self.ctx.pico_panel = self.pico_panel
+        self.ctx.realtime_postprocess_panel = self.realtime_postprocess_panel
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.root.after_idle(self._sync_paned_height)
 
     def _build_scrollable_main(self, root):
         viewport = ttk.Frame(root)
@@ -85,13 +135,23 @@ class MainGUIApp:
         main = ttk.Frame(self.main_canvas, padding=10)
         self.main_canvas_window = self.main_canvas.create_window((0, 0), window=main, anchor="nw")
 
-        def _update_scrollregion(_event=None):
+        def _update_scrollregion():
+            self._scrollregion_after = None
             self.main_canvas.configure(scrollregion=self.main_canvas.bbox("all"))
 
-        def _fit_width(event):
+        def _schedule_scrollregion(_event=None):
+            if self._scrollregion_after is None:
+                self._scrollregion_after = self.root.after_idle(_update_scrollregion)
+
+        def _fit_viewport(event):
             requested = main.winfo_reqwidth()
-            self.main_canvas.itemconfigure(self.main_canvas_window, width=max(requested, event.width))
-            _update_scrollregion()
+            requested_h = main.winfo_reqheight()
+            self.main_canvas.itemconfigure(
+                self.main_canvas_window,
+                width=max(requested, event.width),
+                height=max(requested_h, event.height),
+            )
+            _schedule_scrollregion()
 
         def _wheel(event):
             if event.state & 0x0001:
@@ -99,10 +159,37 @@ class MainGUIApp:
             else:
                 self.main_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
-        main.bind("<Configure>", _update_scrollregion)
-        self.main_canvas.bind("<Configure>", _fit_width)
+        main.bind("<Configure>", _schedule_scrollregion)
+        self.main_canvas.bind("<Configure>", _fit_viewport)
         self.main_canvas.bind_all("<MouseWheel>", _wheel)
         return main
+
+    def _sync_paned_height(self):
+        try:
+            heights = [
+                self.control_area.winfo_reqheight(),
+                getattr(self, "left_area", self.control_area).winfo_reqheight(),
+                getattr(self, "right_area", self.control_area).winfo_reqheight(),
+                self.postprocess_area.winfo_reqheight(),
+                self.root.winfo_height() - 40,
+                620,
+            ]
+            height = max(int(h) for h in heights if h is not None)
+            if height != self._paned_height:
+                self.main_paned.configure(height=height)
+                if hasattr(self, "control_paned"):
+                    self.control_paned.configure(height=height)
+                self._paned_height = height
+                if self._scrollregion_after is None:
+                    def _refresh_scrollregion():
+                        self._scrollregion_after = None
+                        self.main_canvas.configure(scrollregion=self.main_canvas.bbox("all"))
+
+                    self._scrollregion_after = self.root.after_idle(_refresh_scrollregion)
+        except Exception:
+            pass
+        finally:
+            self.root.after(1000, self._sync_paned_height)
 
     def _configure_theme(self):
         self.colors = {
@@ -180,9 +267,14 @@ class MainGUIApp:
         )
         style.configure("TRadiobutton", background=self.colors["app_bg"], foreground=self.colors["text"])
 
-
     def on_close(self):
         try:
+            if hasattr(self, "realtime_postprocess_panel"):
+                try:
+                    self.realtime_postprocess_panel.stop_worker()
+                except Exception:
+                    pass
+
             if self.ctx.afg is not None:
                 try:
                     self.ctx.afg.output_off()
@@ -214,7 +306,7 @@ class MainGUIApp:
 
 def main():
     root = tk.Tk()
-    app = MainGUIApp(root)
+    MainGUIApp(root)
     root.mainloop()
 
 

@@ -32,14 +32,24 @@ class ScanPanel:
         self.y_step_var = tk.StringVar(value="0.5")
 
         self.dwell_var = tk.StringVar(value="0.1")
+        self.scan_mode_var = tk.StringVar(value="Fixed voltage: sweep frequency")
         self.freq_start_mhz_var = tk.StringVar(value="1.0")
         self.freq_stop_mhz_var = tk.StringVar(value="2.0")
         self.freq_step_khz_var = tk.StringVar(value="100")
+        self.voltage_start_vpp_var = tk.StringVar(value="0.1")
+        self.voltage_stop_vpp_var = tk.StringVar(value="1.0")
+        self.voltage_step_vpp_var = tk.StringVar(value="0.1")
         self.distance_hydrophone_channel_var = tk.StringVar(value="D")
         self.distance_sound_speed_var = tk.StringVar(value="1500")
         self.distance_threshold_sigma_var = tk.StringVar(value="6")
         self.distance_result_var = tk.StringVar(value="Distance: N/A")
         self.distance_button = None
+        self.power_voltage_channel_var = tk.StringVar(value="A")
+        self.power_current_channel_var = tk.StringVar(value="B")
+        self.power_t1_us_var = tk.StringVar(value="0")
+        self.power_cycles_var = tk.StringVar(value="20")
+        self.power_result_var = tk.StringVar(value="Power: N/A")
+        self.power_button = None
         self.monitor_status_var = tk.StringVar(value="Idle")
         self.monitor_point_var = tk.StringVar(value="Point: 0 / 0")
         self.monitor_position_var = tk.StringVar(value="Position: ---, --- mm")
@@ -59,10 +69,9 @@ class ScanPanel:
     # UI
     # ============================================================
     def _build_ui(self):
-        for c in range(8):
+        for c in range(7):
             self.frame.columnconfigure(c, weight=0)
-        self.frame.columnconfigure(6, weight=1)
-        self.frame.columnconfigure(7, weight=0, minsize=260)
+        self.frame.columnconfigure(6, weight=1, minsize=220)
 
         row = 0
         ttk.Label(self.frame, text="X0").grid(row=row, column=0, padx=2, pady=2, sticky="w")
@@ -95,14 +104,38 @@ class ScanPanel:
         row += 1
         ttk.Label(self.frame, text="Dwell (s)").grid(row=row, column=0, padx=2, pady=2, sticky="w")
         ttk.Entry(self.frame, textvariable=self.dwell_var, width=7).grid(row=row, column=1, padx=2, pady=2)
-        freq_frame = ttk.Frame(self.frame)
-        freq_frame.grid(row=row, column=2, columnspan=4, padx=2, pady=2, sticky="w")
-        ttk.Label(freq_frame, text="Freq MHz").pack(side="left")
-        ttk.Entry(freq_frame, textvariable=self.freq_start_mhz_var, width=7).pack(side="left", padx=(4, 0))
-        ttk.Label(freq_frame, text="to").pack(side="left", padx=(4, 0))
-        ttk.Entry(freq_frame, textvariable=self.freq_stop_mhz_var, width=7).pack(side="left", padx=(4, 0))
-        ttk.Label(freq_frame, text="step kHz").pack(side="left", padx=(8, 0))
-        ttk.Entry(freq_frame, textvariable=self.freq_step_khz_var, width=7).pack(side="left", padx=(4, 0))
+        ttk.Label(self.frame, text="Mode").grid(row=row, column=2, padx=2, pady=2, sticky="w")
+        self.scan_mode_combo = ttk.Combobox(
+            self.frame,
+            textvariable=self.scan_mode_var,
+            values=["Fixed voltage: sweep frequency", "Fixed frequency: sweep voltage"],
+            width=28,
+            state="readonly",
+        )
+        self.scan_mode_combo.grid(row=row, column=3, columnspan=3, padx=2, pady=2, sticky="ew")
+        self.scan_mode_combo.bind("<<ComboboxSelected>>", lambda _event: self._refresh_scan_mode_ui())
+
+        row += 1
+        self.frequency_sweep_frame = ttk.Frame(self.frame)
+        self.frequency_sweep_frame.grid(row=row, column=0, columnspan=6, padx=2, pady=2, sticky="w")
+        ttk.Label(self.frequency_sweep_frame, text="Freq MHz").pack(side="left")
+        ttk.Entry(self.frequency_sweep_frame, textvariable=self.freq_start_mhz_var, width=7).pack(side="left", padx=(4, 0))
+        ttk.Label(self.frequency_sweep_frame, text="to").pack(side="left", padx=(4, 0))
+        ttk.Entry(self.frequency_sweep_frame, textvariable=self.freq_stop_mhz_var, width=7).pack(side="left", padx=(4, 0))
+        ttk.Label(self.frequency_sweep_frame, text="step kHz").pack(side="left", padx=(8, 0))
+        ttk.Entry(self.frequency_sweep_frame, textvariable=self.freq_step_khz_var, width=7).pack(side="left", padx=(4, 0))
+
+        self.voltage_sweep_frame = ttk.Frame(self.frame)
+        self.voltage_sweep_frame.grid(row=row, column=0, columnspan=6, padx=2, pady=2, sticky="w")
+        ttk.Label(self.voltage_sweep_frame, text="Fixed MHz").pack(side="left")
+        ttk.Entry(self.voltage_sweep_frame, textvariable=self.freq_start_mhz_var, width=7).pack(side="left", padx=(4, 0))
+        ttk.Label(self.voltage_sweep_frame, text="Vpp").pack(side="left", padx=(10, 0))
+        ttk.Entry(self.voltage_sweep_frame, textvariable=self.voltage_start_vpp_var, width=7).pack(side="left", padx=(4, 0))
+        ttk.Label(self.voltage_sweep_frame, text="to").pack(side="left", padx=(4, 0))
+        ttk.Entry(self.voltage_sweep_frame, textvariable=self.voltage_stop_vpp_var, width=7).pack(side="left", padx=(4, 0))
+        ttk.Label(self.voltage_sweep_frame, text="step").pack(side="left", padx=(8, 0))
+        ttk.Entry(self.voltage_sweep_frame, textvariable=self.voltage_step_vpp_var, width=7).pack(side="left", padx=(4, 0))
+        self._refresh_scan_mode_ui()
         # Repeated sampling at one point is temporarily disabled.
         # trigger_frame = ttk.Frame(self.frame)
         # trigger_frame.grid(row=row, column=2, columnspan=2, padx=2, pady=2, sticky="w")
@@ -133,25 +166,63 @@ class ScanPanel:
         self.distance_button.pack(side="left", padx=(0, 10))
         ttk.Label(dist_frame, textvariable=self.distance_result_var).pack(side="left")
 
-        monitor_frame = ttk.LabelFrame(self.frame, text="📈 Scan Monitor", padding=6)
-        monitor_frame.grid(row=0, column=7, rowspan=6, padx=(12, 2), pady=2, sticky="nsew")
+        power_frame = ttk.Frame(self.frame)
+        power_frame.grid(row=row + 1, column=0, columnspan=6, padx=2, pady=2, sticky="ew")
+        ttk.Label(power_frame, text="Power V ch").pack(side="left")
+        ttk.Combobox(
+            power_frame,
+            textvariable=self.power_voltage_channel_var,
+            values=["A", "B", "C", "D"],
+            width=4,
+            state="readonly",
+        ).pack(side="left", padx=(4, 8))
+        ttk.Label(power_frame, text="I ch").pack(side="left")
+        ttk.Combobox(
+            power_frame,
+            textvariable=self.power_current_channel_var,
+            values=["A", "B", "C", "D"],
+            width=4,
+            state="readonly",
+        ).pack(side="left", padx=(4, 8))
+        ttk.Label(power_frame, text="t0 us").pack(side="left")
+        ttk.Entry(power_frame, textvariable=self.power_t1_us_var, width=6).pack(side="left", padx=(4, 2))
+        ttk.Label(power_frame, text="cycles N").pack(side="left")
+        ttk.Entry(power_frame, textvariable=self.power_cycles_var, width=5).pack(side="left", padx=(4, 8))
+        self.power_button = ttk.Button(
+            power_frame,
+            text="∫ Calculate Power",
+            command=self.calculate_power,
+            state="disabled",
+        )
+        self.power_button.pack(side="left", padx=(0, 10))
+        ttk.Label(power_frame, textvariable=self.power_result_var).pack(side="left")
+
+        monitor_frame = ttk.LabelFrame(self.frame, text="📈 Scan Monitor", padding=5)
+        monitor_frame.grid(row=8, column=0, columnspan=7, padx=2, pady=(4, 2), sticky="ew")
         monitor_frame.columnconfigure(0, weight=1)
-        ttk.Label(monitor_frame, textvariable=self.monitor_status_var).grid(row=0, column=0, sticky="w", pady=(0, 2))
-        ttk.Label(monitor_frame, textvariable=self.monitor_position_var).grid(row=1, column=0, sticky="w", pady=1)
-        ttk.Label(monitor_frame, textvariable=self.monitor_point_var).grid(row=2, column=0, sticky="w", pady=1)
-        ttk.Label(monitor_frame, textvariable=self.monitor_frequency_var).grid(row=3, column=0, sticky="w", pady=1)
+
+        monitor_top = ttk.Frame(monitor_frame)
+        monitor_top.grid(row=0, column=0, sticky="ew")
+        ttk.Label(monitor_top, textvariable=self.monitor_status_var).pack(side="left", padx=(0, 12))
+        ttk.Label(monitor_top, textvariable=self.monitor_position_var).pack(side="left", padx=(0, 12))
+        ttk.Label(monitor_top, textvariable=self.monitor_point_var).pack(side="left", padx=(0, 12))
+        ttk.Label(monitor_top, textvariable=self.monitor_frequency_var).pack(side="left", padx=(0, 12))
+
         ttk.Progressbar(
             monitor_frame,
             variable=self.monitor_progress_var,
             maximum=100.0,
             mode="determinate",
             length=220,
-        ).grid(row=4, column=0, sticky="w", pady=(4, 2))
-        ttk.Label(monitor_frame, textvariable=self.monitor_elapsed_var).grid(row=5, column=0, sticky="w", pady=1)
-        ttk.Label(monitor_frame, textvariable=self.monitor_eta_var).grid(row=6, column=0, sticky="w", pady=1)
+        ).grid(row=1, column=0, sticky="ew", pady=(4, 2))
+
+        monitor_bottom = ttk.Frame(monitor_frame)
+        monitor_bottom.grid(row=2, column=0, sticky="ew")
+        ttk.Label(monitor_bottom, textvariable=self.monitor_elapsed_var).pack(side="left", padx=(0, 16))
+        ttk.Label(monitor_bottom, textvariable=self.monitor_eta_var).pack(side="left")
 
         assist_frame = ttk.LabelFrame(self.frame, text="✅ Readiness / XY Preview", padding=6)
-        assist_frame.grid(row=3, column=6, rowspan=3, padx=(18, 8), pady=2, sticky="nsew")
+        assist_frame.grid(row=3, column=6, rowspan=3, padx=(10, 4), pady=2, sticky="nsew")
         assist_frame.columnconfigure(0, weight=1)
         ttk.Label(assist_frame, textvariable=self.readiness_var).grid(row=0, column=0, sticky="w")
         ttk.Button(
@@ -161,15 +232,15 @@ class ScanPanel:
         ).grid(row=1, column=0, sticky="ew", pady=(4, 5))
         self.preview_canvas = tk.Canvas(
             assist_frame,
-            width=250,
-            height=92,
+            width=210,
+            height=82,
             bg="#ffffff",
             highlightthickness=1,
             highlightbackground="#b7c6d8",
         )
         self.preview_canvas.grid(row=2, column=0, sticky="ew")
 
-        row += 1
+        row += 2
         ttk.Button(self.frame, text="▶ Start Scan", command=self.start_scan).grid(row=row, column=2, padx=4, pady=5,
                                                                                 sticky="ew")
         ttk.Button(self.frame, text="■ Stop Scan", command=self.stop_scan).grid(row=row, column=3, padx=4, pady=5,
@@ -224,6 +295,48 @@ class ScanPanel:
         if len(frequencies_hz) == 0:
             raise ValueError("Frequency list is empty.")
         return frequencies_hz
+
+    def _is_voltage_sweep_mode(self):
+        return self.scan_mode_var.get().strip() == "Fixed frequency: sweep voltage"
+
+    def _refresh_scan_mode_ui(self):
+        if not hasattr(self, "frequency_sweep_frame") or not hasattr(self, "voltage_sweep_frame"):
+            return
+        if self._is_voltage_sweep_mode():
+            self.frequency_sweep_frame.grid_remove()
+            self.voltage_sweep_frame.grid()
+        else:
+            self.voltage_sweep_frame.grid_remove()
+            self.frequency_sweep_frame.grid()
+
+    def _build_voltage_list_vpp(self):
+        voltage_start = self._get_float(self.voltage_start_vpp_var, "Voltage Start Vpp")
+        voltage_stop = self._get_float(self.voltage_stop_vpp_var, "Voltage Stop Vpp")
+        voltage_step = self._get_float(self.voltage_step_vpp_var, "Voltage Step Vpp")
+
+        if voltage_start <= 0:
+            raise ValueError("Voltage Start must be positive.")
+        if voltage_stop < voltage_start:
+            raise ValueError("Voltage Stop must be >= Voltage Start.")
+        if voltage_step <= 0:
+            raise ValueError("Voltage Step must be positive.")
+
+        voltages = np.arange(voltage_start, voltage_stop + voltage_step * 1e-9, voltage_step, dtype=float)
+        if len(voltages) == 0:
+            raise ValueError("Voltage list is empty.")
+        return voltages
+
+    def _build_excitation_lists(self):
+        if self._is_voltage_sweep_mode():
+            fixed_freq_mhz = self._get_float(self.freq_start_mhz_var, "Fixed Freq MHz")
+            if fixed_freq_mhz <= 0:
+                raise ValueError("Fixed Freq MHz must be positive.")
+            amplitudes_vpp = self._build_voltage_list_vpp()
+            frequencies_hz = np.full(len(amplitudes_vpp), fixed_freq_mhz * 1e6, dtype=float)
+            return "voltage_sweep", frequencies_hz, amplitudes_vpp
+
+        frequencies_hz = self._build_frequency_list_hz()
+        return "frequency_sweep", frequencies_hz, None
 
     def _format_duration(self, seconds):
         if seconds is None:
@@ -359,10 +472,12 @@ class ScanPanel:
     def _refresh_scan_helpers(self):
         try:
             self.readiness_var.set(self._readiness_text())
+            self._refresh_power_button_state()
             xs, ys = self._preview_grid_values()
             self._draw_preview_grid(xs, ys)
         except Exception as e:
             self.readiness_var.set(self._readiness_text())
+            self._refresh_power_button_state()
             try:
                 self.preview_canvas.delete("all")
                 self.preview_canvas.create_text(125, 46, text=f"Preview: {e}", fill="#9a3412")
@@ -370,6 +485,126 @@ class ScanPanel:
                 pass
         finally:
             self.frame.after(800, self._refresh_scan_helpers)
+
+    def _power_channels_ready(self):
+        signals_v = getattr(self.ctx, "last_pico_signals", None)
+        if not isinstance(signals_v, dict):
+            return False
+        v_ch = self.power_voltage_channel_var.get().strip().upper()
+        i_ch = self.power_current_channel_var.get().strip().upper()
+        return v_ch in signals_v and i_ch in signals_v
+
+    def _refresh_power_button_state(self):
+        ready = self._power_channels_ready()
+        if self.power_button is not None:
+            self.power_button.configure(state="normal" if ready else "disabled")
+        if not ready:
+            self.power_result_var.set("Power: N/A")
+
+    def _get_power_frequency_hz(self):
+        meta = getattr(self.ctx, "last_pico_meta", None) or {}
+
+        freqs = meta.get("excitation_frequencies_hz")
+        if freqs is not None:
+            freqs = np.asarray(freqs, dtype=float).reshape(-1)
+            if len(freqs) > 0 and freqs[-1] > 0:
+                return float(freqs[-1])
+
+        for key in ("excitation_frequency_hz", "frequency_hz", "afg_frequency_hz"):
+            value = meta.get(key)
+            if value is not None:
+                value = float(np.asarray(value).reshape(-1)[0])
+                if value > 0:
+                    return value
+
+        try:
+            if self.ctx.afg is not None:
+                freq = float(self.ctx.afg.query(f"SOURce{self.ctx.afg.channel}:FREQuency:FIXed?"))
+                if freq > 0:
+                    return freq
+        except Exception:
+            pass
+
+        return self._get_float(self.freq_start_mhz_var, "Freq MHz") * 1e6
+
+    def calculate_power(self):
+        try:
+            time_s = getattr(self.ctx, "last_pico_time", None)
+            signals_v = getattr(self.ctx, "last_pico_signals", None)
+            if time_s is None or not isinstance(signals_v, dict):
+                raise RuntimeError("Please run Capture Test first.")
+
+            v_ch = self.power_voltage_channel_var.get().strip().upper()
+            i_ch = self.power_current_channel_var.get().strip().upper()
+            if v_ch not in signals_v:
+                raise RuntimeError(f"Voltage channel {v_ch} is not available in the last capture.")
+            if i_ch not in signals_v:
+                raise RuntimeError(f"Current channel {i_ch} is not available in the last capture.")
+
+            t = np.asarray(time_s, dtype=float).reshape(-1)
+            voltage = np.asarray(signals_v[v_ch], dtype=float)
+            current = np.asarray(signals_v[i_ch], dtype=float)
+            if voltage.ndim == 2:
+                voltage = voltage[-1]
+            if current.ndim == 2:
+                current = current[-1]
+            voltage = voltage.reshape(-1)
+            current = current.reshape(-1)
+
+            if len(t) != len(voltage) or len(t) != len(current):
+                raise RuntimeError("Voltage/current signal length does not match time axis.")
+
+            t1_s = float(self.power_t1_us_var.get()) * 1e-6
+            cycles = int(float(self.power_cycles_var.get()))
+            if cycles < 1:
+                raise ValueError("Power integration cycles N must be >= 1.")
+            frequency_hz = self._get_power_frequency_hz()
+            if frequency_hz <= 0:
+                raise ValueError("Cannot determine excitation frequency for cycle-based integration.")
+            period_s = 1.0 / frequency_hz
+            t2_s = t1_s + cycles * period_s
+            if t1_s < t[0] or t2_s > t[-1]:
+                raise RuntimeError(
+                    f"Power integration window {t1_s * 1e6:.3f}-{t2_s * 1e6:.3f} us "
+                    f"is outside captured range {t[0] * 1e6:.3f}-{t[-1] * 1e6:.3f} us."
+                )
+
+            mask = (t >= t1_s) & (t <= t2_s)
+            if np.count_nonzero(mask) < 1:
+                raise RuntimeError("Power integration window contains no samples.")
+
+            inner_t = t[mask]
+            t_gate = np.unique(np.concatenate(([t1_s], inner_t, [t2_s]))).astype(float)
+            # Fixed probe conversions:
+            # voltage channel: measured scope voltage * 10 = actual drive voltage.
+            # current probe: 5 mV / mA = 0.005 V / mA, so I[A] = V_scope / 5.
+            v_gate = np.interp(t_gate, t, voltage) * 10.0
+            i_gate = np.interp(t_gate, t, current) / 5.0
+            p_inst = v_gate * i_gate
+            energy_j = float(np.trapz(p_inst, t_gate))
+            avg_power_w = energy_j / float(t2_s - t1_s)
+            vrms = float(np.sqrt(np.mean(v_gate ** 2)))
+            irms = float(np.sqrt(np.mean(i_gate ** 2)))
+            p_peak_w = float(np.max(np.abs(p_inst)))
+
+            self.power_result_var.set(
+                f"Pavg={avg_power_w:.4g} W | E={energy_j:.4g} J | {cycles}T"
+            )
+            self.log(
+                "[SCAN] Electrical power estimate: "
+                f"Vch={v_ch}, Ich={i_ch}, "
+                f"f={frequency_hz / 1e6:.6f} MHz, cycles={cycles}, "
+                f"window={t1_s * 1e6:.3f}-{t2_s * 1e6:.3f} us, "
+                f"Pavg={avg_power_w:.6g} W, E={energy_j:.6g} J, "
+                f"Vrms={vrms:.6g} V, Irms={irms:.6g} A, Ppeak_abs={p_peak_w:.6g} W"
+            )
+
+        except Exception as e:
+            self.log(f"[SCAN] Calculate power failed: {e}")
+            try:
+                messagebox.showerror("Power Calculation Error", str(e))
+            except Exception:
+                pass
 
     def open_save_folder(self):
         try:
@@ -420,7 +655,9 @@ class ScanPanel:
                     )
                 else:
                     self.monitor_point_var.set("Point: 0 / 0")
-                self.monitor_frequency_var.set(f"Freq: {freq_index} / {freq_count}")
+                mode = str(progress.get("scan_mode", "frequency_sweep"))
+                label = "V step" if mode == "voltage_sweep" else "Freq"
+                self.monitor_frequency_var.set(f"{label}: {freq_index} / {freq_count}")
                 self.monitor_elapsed_var.set(
                     f"Elapsed: {self._format_duration(progress.get('elapsed_s'))}"
                 )
@@ -737,7 +974,7 @@ class ScanPanel:
             y_step = self._get_float(self.y_step_var, "Y Step")
 
             dwell_s = self._get_float(self.dwell_var, "Dwell")
-            frequencies_hz = self._build_frequency_list_hz()
+            scan_mode, frequencies_hz, amplitudes_vpp = self._build_excitation_lists()
             # Repeated sampling at one point is temporarily disabled.
             # trigger_count = self._get_int(self.trigger_count_var, "Trig/point")
 
@@ -779,6 +1016,7 @@ class ScanPanel:
                 "total_captures": 0,
                 "current_frequency_index": 0,
                 "frequency_count": len(frequencies_hz),
+                "scan_mode": scan_mode,
                 "elapsed_s": 0.0,
                 "eta_s": None,
                 "message": "Starting scan",
@@ -786,11 +1024,20 @@ class ScanPanel:
             self.ctx.scan_progress_update_id = getattr(self.ctx, "scan_progress_update_id", 0) + 1
             self.set_distance_ready(False)
 
+            if amplitudes_vpp is None:
+                sweep_text = (
+                    f"mode=fixed voltage / sweep frequency; freq/point={len(frequencies_hz)}; "
+                    f"freq={frequencies_hz[0] / 1e6:.6f}->{frequencies_hz[-1] / 1e6:.6f} MHz"
+                )
+            else:
+                sweep_text = (
+                    f"mode=fixed frequency / sweep voltage; voltage/point={len(amplitudes_vpp)}; "
+                    f"freq={frequencies_hz[0] / 1e6:.6f} MHz; "
+                    f"Vpp={amplitudes_vpp[0]:.6g}->{amplitudes_vpp[-1]:.6g}"
+                )
             self.log(
                 f"[SCAN] Start requested: X {x_start}->{x_stop} step {x_step}; "
-                f"Y {y_start}->{y_stop} step {y_step}; dwell={dwell_s}s; "
-                f"freq/point={len(frequencies_hz)}; "
-                f"freq={frequencies_hz[0] / 1e6:.6f}->{frequencies_hz[-1] / 1e6:.6f} MHz"
+                f"Y {y_start}->{y_stop} step {y_step}; dwell={dwell_s}s; {sweep_text}"
             )
             self.log("[SCAN] Make sure AFG trigger source is BUS and burst setup is already applied.")
 
@@ -803,6 +1050,8 @@ class ScanPanel:
                 y_step=y_step,
                 dwell_s=dwell_s,
                 frequencies_hz=frequencies_hz,
+                amplitudes_vpp=amplitudes_vpp,
+                scan_mode=scan_mode,
                 verbose=True,
             )
             self.log("Scan thread started.")

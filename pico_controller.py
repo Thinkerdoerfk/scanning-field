@@ -697,6 +697,7 @@ class PicoController:
             }
             signal = payload["signal"]
             excitation_frequencies_hz = result.meta.get("excitation_frequencies_hz")
+            excitation_amplitudes_vpp = result.meta.get("excitation_amplitudes_vpp")
             if excitation_frequencies_hz is not None:
                 payload["trigger_count"] = 1
             elif signal.ndim == 2:
@@ -708,6 +709,11 @@ class PicoController:
                 payload["excitation_frequencies_hz"] = np.asarray(excitation_frequencies_hz, dtype=float)
                 payload["excitation_frequencies_mhz"] = payload["excitation_frequencies_hz"] / 1e6
                 payload["frequency_count"] = int(len(payload["excitation_frequencies_hz"]))
+            if excitation_amplitudes_vpp is not None:
+                payload["excitation_amplitudes_vpp"] = np.asarray(excitation_amplitudes_vpp, dtype=float)
+                payload["amplitude_count"] = int(len(payload["excitation_amplitudes_vpp"]))
+            if "scan_mode" in result.meta:
+                payload["scan_mode"] = np.array(str(result.meta.get("scan_mode")))
 
             if point_index is not None:
                 payload["point_index"] = int(point_index)

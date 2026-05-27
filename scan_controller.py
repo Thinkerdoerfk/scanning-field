@@ -108,6 +108,8 @@ class ScanController:
             y_mm: float,
             dwell_s: float = 0.0,
             frequencies_hz=None,
+            amplitudes_vpp=None,
+            scan_mode: str = "frequency_sweep",
             completed_points_before: int = 0,
             total_points: int = 0,
             verbose: bool = True,
@@ -143,10 +145,17 @@ class ScanController:
         if np.any(frequencies_hz <= 0):
             raise ValueError("All frequencies must be positive")
 
+        if amplitudes_vpp is not None:
+            amplitudes_vpp = np.asarray(amplitudes_vpp, dtype=float)
+            if amplitudes_vpp.ndim != 1 or len(amplitudes_vpp) != len(frequencies_hz):
+                raise ValueError("amplitudes_vpp must be a 1D sequence with the same length as frequencies_hz")
+            if np.any(amplitudes_vpp <= 0):
+                raise ValueError("All amplitudes must be positive")
+
         if verbose:
             self.log(
                 f"[SCAN] Point #{point_index}: x={x_mm:.3f} mm, y={y_mm:.3f} mm, "
-                f"freq/point={len(frequencies_hz)}"
+                f"excitation/point={len(frequencies_hz)}, mode={scan_mode}"
             )
 
         # Dwell is a point-settling delay, so apply it once before the frequency sweep.
@@ -163,6 +172,7 @@ class ScanController:
             if self._stop_requested:
                 self.log("[SCAN] Scan stopped by user.")
                 return
+            amplitude_vpp = None if amplitudes_vpp is None else float(amplitudes_vpp[freq_index - 1])
 
             if total_points:
                 self._publish_running_progress(
@@ -180,13 +190,16 @@ class ScanController:
                 )
 
             if verbose and (freq_index == 1 or freq_index == len(frequencies_hz)):
+                amp_text = "" if amplitude_vpp is None else f", {amplitude_vpp:.6g} Vpp"
                 self.log(
-                    f"[SCAN] Point #{point_index}, frequency {freq_index}/{len(frequencies_hz)}: "
-                    f"{frequency_hz / 1e6:.6f} MHz."
+                    f"[SCAN] Point #{point_index}, excitation {freq_index}/{len(frequencies_hz)}: "
+                    f"{frequency_hz / 1e6:.6f} MHz{amp_text}."
                 )
 
-            # 1. Set excitation frequency while keeping existing amplitude/burst settings.
+            # 1. Set requested excitation while keeping burst settings unchanged.
             afg.set_frequency(float(frequency_hz))
+            if amplitude_vpp is not None:
+                afg.set_amplitude_vpp(amplitude_vpp)
 
             # 2. Pico enters waiting-for-trigger state
             pico.arm_current_capture()
@@ -197,7 +210,15 @@ class ScanController:
             # 4. wait and fetch waveform
             results.append(pico.wait_and_fetch_current_capture())
 
-        result = self._combine_point_results(results, point_index, x_mm, y_mm, frequencies_hz)
+        result = self._combine_point_results(
+            results,
+            point_index,
+            x_mm,
+            y_mm,
+            frequencies_hz,
+            amplitudes_vpp=amplitudes_vpp,
+            scan_mode=scan_mode,
+        )
 
         # 5. save waveform
         save_paths = pico.save_capture_npz(
@@ -220,7 +241,16 @@ class ScanController:
             for ch, path in save_paths.items():
                 self.log(f"[SCAN] Saved channel {ch}: {path}")
 
-    def _combine_point_results(self, results, point_index, x_mm, y_mm, frequencies_hz):
+    def _combine_point_results(
+        self,
+        results,
+        point_index,
+        x_mm,
+        y_mm,
+        frequencies_hz,
+        amplitudes_vpp=None,
+        scan_mode="frequency_sweep",
+    ):
         if not results:
             raise RuntimeError("No Pico captures were collected for this point")
 
@@ -233,16 +263,21 @@ class ScanController:
             )
 
         meta = dict(first.meta)
+        amplitude_array = None if amplitudes_vpp is None else np.asarray(amplitudes_vpp, dtype=float)
         meta.update(
             {
                 "point_index": int(point_index),
                 "x_mm": float(x_mm),
                 "y_mm": float(y_mm),
+                "scan_mode": str(scan_mode),
                 "frequency_count": int(len(frequencies_hz)),
                 "excitation_frequencies_hz": np.asarray(frequencies_hz, dtype=float),
                 "excitation_frequencies_mhz": np.asarray(frequencies_hz, dtype=float) / 1e6,
-                "signal_shape": "frequency_count x samples",
+                "excitation_count": int(len(frequencies_hz)),
+                "excitation_amplitudes_vpp": amplitude_array,
+                "signal_shape": "excitation_count x samples",
                 "per_frequency_meta": [dict(result.meta) for result in results],
+                "per_excitation_meta": [dict(result.meta) for result in results],
                 # Backward-compatible name for older analysis scripts.
                 "per_trigger_meta": [dict(result.meta) for result in results],
             }
@@ -283,6 +318,8 @@ class ScanController:
         y_step: float,
         dwell_s: float = 0.0,
         frequencies_hz=None,
+        amplitudes_vpp=None,
+        scan_mode: str = "frequency_sweep",
         verbose: bool = True,
     ):
         """
@@ -314,6 +351,12 @@ class ScanController:
                 raise ValueError("frequencies_hz must be a non-empty 1D sequence")
             if np.any(frequencies_hz <= 0):
                 raise ValueError("All frequencies must be positive")
+            if amplitudes_vpp is not None:
+                amplitudes_vpp = np.asarray(amplitudes_vpp, dtype=float)
+                if amplitudes_vpp.ndim != 1 or len(amplitudes_vpp) != len(frequencies_hz):
+                    raise ValueError("amplitudes_vpp must match frequencies_hz length")
+                if np.any(amplitudes_vpp <= 0):
+                    raise ValueError("All amplitudes must be positive")
 
             xs = np.arange(x_start, x_stop + 0.5 * x_step, x_step, dtype=float)
             ys = np.arange(y_start, y_stop + 0.5 * y_step, y_step, dtype=float)
@@ -325,11 +368,13 @@ class ScanController:
             self.log(
                 f"X: {x_start} -> {x_stop} step {x_step}, "
                 f"Y: {y_start} -> {y_stop} step {y_step}, "
-                f"dwell={dwell_s} s, freq/point={len(frequencies_hz)}"
+                f"dwell={dwell_s} s, excitation/point={len(frequencies_hz)}, mode={scan_mode}"
             )
             self.log(f"X points: {xs}")
             self.log(f"Y points: {ys}")
             self.log(f"Frequencies (MHz): {frequencies_hz / 1e6}")
+            if amplitudes_vpp is not None:
+                self.log(f"Amplitudes (Vpp): {amplitudes_vpp}")
 
             current_x = float(x_start)
             current_y = float(y_start)
@@ -347,6 +392,7 @@ class ScanController:
                 total_captures=total_points * len(frequencies_hz),
                 current_frequency_index=0,
                 frequency_count=len(frequencies_hz),
+                scan_mode=str(scan_mode),
                 elapsed_s=0.0,
                 eta_s=None,
                 message="Starting scan",
@@ -394,6 +440,8 @@ class ScanController:
                         y_mm=current_y,
                         dwell_s=dwell_s,
                         frequencies_hz=frequencies_hz,
+                        amplitudes_vpp=amplitudes_vpp,
+                        scan_mode=scan_mode,
                         completed_points_before=completed_points,
                         total_points=total_points,
                         verbose=verbose,
@@ -452,6 +500,7 @@ class ScanController:
                 total_captures=total_points * len(frequencies_hz),
                 current_frequency_index=len(frequencies_hz),
                 frequency_count=len(frequencies_hz),
+                scan_mode=str(scan_mode),
                 elapsed_s=elapsed_s,
                 eta_s=0.0,
                 message="Finished",
@@ -482,6 +531,8 @@ class ScanController:
         y_step: float,
         dwell_s: float = 0.0,
         frequencies_hz=None,
+        amplitudes_vpp=None,
+        scan_mode: str = "frequency_sweep",
         verbose: bool = True,
     ):
         if self._is_running:
@@ -498,6 +549,8 @@ class ScanController:
                 y_step=y_step,
                 dwell_s=dwell_s,
                 frequencies_hz=frequencies_hz,
+                amplitudes_vpp=amplitudes_vpp,
+                scan_mode=scan_mode,
                 verbose=verbose,
             ),
             daemon=True,

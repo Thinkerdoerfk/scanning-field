@@ -107,6 +107,13 @@ class AFGController:
         ch = self.channel
         self.write(f"SOURce{ch}:FREQuency:FIXed {float(frequency_hz)}")
 
+    def set_amplitude_vpp(self, amplitude_vpp: float):
+        if amplitude_vpp <= 0:
+            raise ValueError("amplitude_vpp must be > 0")
+        ch = self.channel
+        self.write(f"SOURce{ch}:VOLTage:UNIT VPP")
+        self.write(f"SOURce{ch}:VOLTage:LEVel:IMMediate:AMPLitude {float(amplitude_vpp)}")
+
     def configure_2mhz_100mvpp(self):
         self.set_sine(frequency_hz=2e6, amplitude_vpp=0.1, offset_v=0.0)
 
