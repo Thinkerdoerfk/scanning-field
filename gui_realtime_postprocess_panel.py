@@ -41,7 +41,7 @@ class RealtimePostprocessPanel(ttk.LabelFrame):
         self.var_gate_t1_us = tk.StringVar(value="400")
         self.var_gate_t2_us = tk.StringVar(value="500")
         self.var_field = tk.StringVar(value="pressure")
-        self.var_freq_index = tk.StringVar(value="1")
+        self.var_freq_index = tk.StringVar(value="all")
         self.var_status = tk.StringVar(value="Stopped")
         self.var_processed = tk.StringVar(value="Files: 0 | Points: 0")
 
@@ -176,7 +176,7 @@ class RealtimePostprocessPanel(ttk.LabelFrame):
             "gate_t1": self._float_or_none_us(self.var_gate_t1_us.get()),
             "gate_t2": self._float_or_none_us(self.var_gate_t2_us.get()),
             "poll_interval_s": 1.0,
-            "save_every_s": 2.0,
+            "save_every_s": 30.0,
         }
 
     def start_worker(self):
@@ -184,6 +184,8 @@ class RealtimePostprocessPanel(ttk.LabelFrame):
             if self.process is not None and self.process.is_alive():
                 raise RuntimeError("Realtime postprocess is already running.")
             config = self._build_config()
+            self.current_data = None
+            self._draw_empty("Processing existing files")
             self.status_queue = mp.Queue()
             self.stop_event = mp.Event()
             self.process = mp.Process(
@@ -235,7 +237,7 @@ class RealtimePostprocessPanel(ttk.LabelFrame):
         except Exception as e:
             self.var_status.set(f"Plot update failed: {e}")
         finally:
-            self.after(2500, self._poll_output_file)
+            self.after(30000, self._poll_output_file)
 
     def _load_current_npz(self):
         with np.load(self.current_npz_path, allow_pickle=True) as d:
@@ -259,7 +261,12 @@ class RealtimePostprocessPanel(ttk.LabelFrame):
         if maps.ndim != 3:
             self._draw_empty("Invalid map shape")
             return
-        idx = int(self.var_freq_index.get()) - 1
+        freq_text = self.var_freq_index.get().strip().lower()
+        if freq_text in ("all", "*"):
+            self._draw_all_frequency_maps(field, maps)
+            return
+
+        idx = int(freq_text) - 1
         idx = max(0, min(idx, maps.shape[0] - 1))
         self.var_freq_index.set(str(idx + 1))
 
@@ -310,6 +317,77 @@ class RealtimePostprocessPanel(ttk.LabelFrame):
         cb = self.fig.colorbar(image, ax=self.ax, fraction=0.046, pad=0.04)
         cb.set_label(label)
         self.fig.tight_layout()
+        self.canvas.draw_idle()
+
+    def _draw_all_frequency_maps(self, field, maps):
+        freq_count = int(maps.shape[0])
+        if freq_count <= 0:
+            self._draw_empty("No map data")
+            return
+
+        freqs_mhz = np.asarray(self.current_data.get("excitation_frequencies_mhz", []), dtype=float).reshape(-1)
+        x_unique = np.asarray(self.current_data.get("x_unique", []), dtype=float).reshape(-1)
+        y_unique = np.asarray(self.current_data.get("y_unique", []), dtype=float).reshape(-1)
+        extent = None
+        if len(x_unique) > 0 and len(y_unique) > 0:
+            extent = [
+                float(np.nanmin(x_unique)),
+                float(np.nanmax(x_unique)),
+                float(np.nanmin(y_unique)),
+                float(np.nanmax(y_unique)),
+            ]
+
+        cols = int(np.ceil(np.sqrt(freq_count)))
+        rows = int(np.ceil(freq_count / cols))
+        self.fig.clear()
+        axes = self.fig.subplots(rows, cols, squeeze=False)
+
+        finite_values = maps[np.isfinite(maps)]
+        if field == "phase":
+            vmin, vmax = -np.pi, np.pi
+            cmap = "twilight"
+        else:
+            vmin = float(np.nanmin(finite_values)) if finite_values.size else None
+            vmax = float(np.nanmax(finite_values)) if finite_values.size else None
+            cmap = "jet"
+
+        last_image = None
+        for i, ax in enumerate(axes.flat):
+            ax.set_facecolor("#ffffff")
+            if i >= freq_count:
+                ax.axis("off")
+                continue
+
+            field_map = maps[i]
+            if np.all(np.isnan(field_map)):
+                ax.text(0.5, 0.5, "No data", ha="center", va="center", transform=ax.transAxes, fontsize=7)
+            else:
+                last_image = ax.imshow(
+                    field_map,
+                    origin="lower",
+                    aspect="equal",
+                    cmap=cmap,
+                    interpolation="nearest",
+                    extent=extent,
+                    vmin=vmin,
+                    vmax=vmax,
+                )
+
+            title = f"{freqs_mhz[i]:.3f} MHz" if i < len(freqs_mhz) else f"#{i + 1}"
+            ax.set_title(title, fontsize=7)
+            ax.set_xticks([])
+            ax.set_yticks([])
+
+        if last_image is not None:
+            if field == "phase":
+                label = "Phase (rad)"
+            elif field == "voltage":
+                label = "Voltage amplitude (V)"
+            else:
+                label = "Pressure amplitude (MPa)"
+            self.fig.colorbar(last_image, ax=axes.ravel().tolist(), fraction=0.025, pad=0.01).set_label(label)
+
+        self.fig.suptitle(f"{field.title()} Maps: All Frequencies", fontsize=10)
         self.canvas.draw_idle()
 
     def destroy(self):

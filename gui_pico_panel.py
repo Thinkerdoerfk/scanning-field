@@ -607,6 +607,22 @@ class PicoPanel(ttk.LabelFrame):
                 raise RuntimeError("PicoScope not connected")
             if not self.ctx.pico.is_configured():
                 raise RuntimeError("PicoScope not configured. Please click Apply Config first.")
+
+            save_dir = self.var_save_dir.get().strip()
+            save_channels = self._parse_save_channels()
+            if save_dir:
+                self.ctx.pico.set_save_dir(save_dir)
+                self.ctx.pico.set_save_channels(save_channels)
+                summary = self.ctx.pico.get_config_summary()
+                enabled_channels = set(summary.get("channels_for_run", []))
+                missing_channels = [ch for ch in save_channels if ch not in enabled_channels]
+                if missing_channels:
+                    raise RuntimeError(
+                        "Save channel(s) "
+                        + ",".join(missing_channels)
+                        + " are not enabled in the current Pico config. "
+                        + "Add them to Capture channels or Trigger source, then click Apply Config."
+                    )
         except Exception as e:
             self.log(f"[PICO] Capture failed: {e}")
             messagebox.showerror("PicoScope Error", str(e))
@@ -616,15 +632,14 @@ class PicoPanel(ttk.LabelFrame):
 
         self._capture_thread = threading.Thread(
             target=self._capture_test_worker,
+            args=(save_dir, save_channels),
             daemon=True,
         )
         self._capture_thread.start()
 
-    def _capture_test_worker(self):
+    def _capture_test_worker(self, save_dir, save_channels):
 
         try:
-            save_dir = self.var_save_dir.get().strip()
-
             self.ctx.pico.arm_current_capture()
             self.log("[PICO] Armed. Waiting using sleep-based fetch workaround...")
 
@@ -635,7 +650,7 @@ class PicoPanel(ttk.LabelFrame):
                 save_paths = self.ctx.pico.save_capture_npz(
                     result=result,
                     folder=save_dir,
-                    save_channels=self._parse_save_channels(),
+                    save_channels=save_channels,
                 )
 
             self.after(0, lambda: self._on_capture_test_success(result, save_paths))

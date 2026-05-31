@@ -145,17 +145,15 @@ class PicoController:
         self.disconnect()
 
     def is_connected(self) -> bool:
-        if self.scope is None or not self._connected:
+        return self.scope is not None and self._connected
+
+    def check_device_alive(self) -> bool:
+        if not self.is_connected():
             return False
         try:
-            if self.scope.ping_unit():
-                return True
+            return bool(self.scope.ping_unit())
         except Exception:
-            pass
-        self._connected = False
-        self._configured = False
-        self._armed = False
-        return False
+            return False
 
     def is_configured(self) -> bool:
         return self._configured
@@ -645,6 +643,23 @@ class PicoController:
     def capture_once(self, timeout_s: float = 5.0) -> PicoCaptureResult:
         self.arm_current_capture()
         return self.wait_and_fetch_current_capture(timeout_s=timeout_s)
+
+    @staticmethod
+    def _get_next_channel_file_index(folder: str, prefix: str) -> int:
+        if not os.path.isdir(folder):
+            return 1
+
+        max_index = 0
+        prefix_text = f"{prefix}_"
+        for filename in os.listdir(folder):
+            if not filename.startswith(prefix_text) or not filename.endswith(".npz"):
+                continue
+            stem = filename[len(prefix_text):-4]
+            try:
+                max_index = max(max_index, int(stem))
+            except ValueError:
+                continue
+        return max_index + 1
 
     # ------------------------------------------------------------------
     # saving

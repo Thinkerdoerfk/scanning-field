@@ -501,7 +501,48 @@ class ScanPanel:
         if not ready:
             self.power_result_var.set("Power: N/A")
 
-    def _get_power_frequency_hz(self):
+    def _estimate_frequency_hz_from_signal(self, time_s, signal):
+        t = np.asarray(time_s, dtype=float).reshape(-1)
+        y = np.asarray(signal, dtype=float).reshape(-1)
+        if len(t) != len(y) or len(t) < 4:
+            raise RuntimeError("Not enough samples to estimate frequency.")
+
+        dt = float(np.median(np.diff(t)))
+        if dt <= 0:
+            raise RuntimeError("Invalid time axis for frequency estimation.")
+
+        y = y - float(np.mean(y))
+        if not np.any(np.isfinite(y)) or float(np.max(np.abs(y))) <= 0:
+            raise RuntimeError("Signal is too small to estimate frequency.")
+
+        window = np.hanning(len(y))
+        spectrum = np.abs(np.fft.rfft(y * window))
+        freqs = np.fft.rfftfreq(len(y), d=dt)
+        if len(spectrum) < 3:
+            raise RuntimeError("FFT result is too short to estimate frequency.")
+
+        spectrum[0] = 0.0
+        idx = int(np.argmax(spectrum))
+        if idx <= 0 or spectrum[idx] <= 0:
+            raise RuntimeError("No dominant frequency peak found.")
+
+        # Parabolic interpolation around the FFT peak gives a better estimate
+        # than the raw frequency-bin spacing for short capture windows.
+        if 0 < idx < len(spectrum) - 1:
+            left = float(spectrum[idx - 1])
+            center = float(spectrum[idx])
+            right = float(spectrum[idx + 1])
+            denom = left - 2.0 * center + right
+            if abs(denom) > 1e-30:
+                idx = idx + 0.5 * (left - right) / denom
+
+        bin_hz = freqs[1] - freqs[0]
+        frequency_hz = float(idx * bin_hz)
+        if frequency_hz <= 0:
+            raise RuntimeError("Estimated frequency is not positive.")
+        return frequency_hz
+
+    def _get_power_frequency_hz(self, time_s=None, signal=None):
         meta = getattr(self.ctx, "last_pico_meta", None) or {}
 
         freqs = meta.get("excitation_frequencies_hz")
@@ -516,6 +557,12 @@ class ScanPanel:
                 value = float(np.asarray(value).reshape(-1)[0])
                 if value > 0:
                     return value
+
+        if time_s is not None and signal is not None:
+            try:
+                return self._estimate_frequency_hz_from_signal(time_s, signal)
+            except Exception as e:
+                self.log(f"[SCAN] FFT frequency estimate failed: {e}")
 
         try:
             if self.ctx.afg is not None:
@@ -558,7 +605,7 @@ class ScanPanel:
             cycles = int(float(self.power_cycles_var.get()))
             if cycles < 1:
                 raise ValueError("Power integration cycles N must be >= 1.")
-            frequency_hz = self._get_power_frequency_hz()
+            frequency_hz = self._get_power_frequency_hz(time_s=t, signal=voltage)
             if frequency_hz <= 0:
                 raise ValueError("Cannot determine excitation frequency for cycle-based integration.")
             period_s = 1.0 / frequency_hz
@@ -572,6 +619,11 @@ class ScanPanel:
             mask = (t >= t1_s) & (t <= t2_s)
             if np.count_nonzero(mask) < 1:
                 raise RuntimeError("Power integration window contains no samples.")
+
+            voltage_offset = float(np.mean(voltage[mask]))
+            current_offset = float(np.mean(current[mask]))
+            voltage = voltage - voltage_offset
+            current = current - current_offset
 
             inner_t = t[mask]
             t_gate = np.unique(np.concatenate(([t1_s], inner_t, [t2_s]))).astype(float)
@@ -595,6 +647,7 @@ class ScanPanel:
                 f"Vch={v_ch}, Ich={i_ch}, "
                 f"f={frequency_hz / 1e6:.6f} MHz, cycles={cycles}, "
                 f"window={t1_s * 1e6:.3f}-{t2_s * 1e6:.3f} us, "
+                f"Voffset={voltage_offset:.6g} V, Ioffset={current_offset:.6g} V(scope), "
                 f"Pavg={avg_power_w:.6g} W, E={energy_j:.6g} J, "
                 f"Vrms={vrms:.6g} V, Irms={irms:.6g} A, Ppeak_abs={p_peak_w:.6g} W"
             )

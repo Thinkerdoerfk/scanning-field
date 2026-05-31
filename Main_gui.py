@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 
 from app_context import AppContext
 from gui_log_panel import LogPanel
@@ -268,7 +268,23 @@ class MainGUIApp:
         style.configure("TRadiobutton", background=self.colors["app_bg"], foreground=self.colors["text"])
 
     def on_close(self):
+        scan_controller = getattr(getattr(self, "scan_panel", None), "scan_controller", None)
+        scan_running = bool(scan_controller is not None and scan_controller.is_running)
+        if scan_running:
+            should_close = messagebox.askyesno(
+                "Scan is running",
+                "A scan is still running.\n\nStop the scan and close the GUI?",
+            )
+            if not should_close:
+                return
+
         try:
+            if scan_running:
+                try:
+                    scan_controller.stop()
+                except Exception:
+                    pass
+
             if hasattr(self, "realtime_postprocess_panel"):
                 try:
                     self.realtime_postprocess_panel.stop_worker()
@@ -292,10 +308,11 @@ class MainGUIApp:
                     pass
 
             if self.ctx.stage is not None:
-                try:
-                    self.ctx.stage.stop()
-                except Exception:
-                    pass
+                for axis in (1, 2):
+                    try:
+                        self.ctx.stage.stop(axis)
+                    except Exception:
+                        pass
                 try:
                     self.ctx.stage.close()
                 except Exception:
