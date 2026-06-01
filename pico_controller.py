@@ -386,6 +386,10 @@ class PicoController:
             raise ValueError("folder cannot be empty")
         os.makedirs(folder, exist_ok=True)
         self.save_dir = folder
+
+    def clear_save_dir(self):
+        self.save_dir = None
+
     def set_save_channels(self, save_channels: Any):
         self.save_channels = self._parse_capture_channels(save_channels)
 

@@ -68,6 +68,8 @@ class PicoPanel(ttk.LabelFrame):
         self.var_auto_trigger_us = tk.StringVar(value="0")
 
         self.var_save_dir = tk.StringVar(value="")
+        self.var_waveform_fixed_y = tk.BooleanVar(value=False)
+        self.var_waveform_y_max = tk.StringVar(value="")
 
     # ------------------------------------------------------------------
     # layout
