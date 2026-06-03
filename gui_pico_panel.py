@@ -215,6 +215,7 @@ class PicoPanel(ttk.LabelFrame):
         ttk.Label(savef, text="Folder").grid(row=0, column=0, sticky="w")
         ttk.Entry(savef, textvariable=self.var_save_dir, width=50).grid(row=0, column=1, sticky="ew", padx=4)
         ttk.Button(savef, text="📁 Browse", command=self.on_choose_save_dir).grid(row=0, column=2, sticky="ew")
+        ttk.Button(savef, text="Clear", command=self.on_clear_save_dir).grid(row=0, column=3, sticky="ew", padx=(4, 0))
 
         savef.columnconfigure(1, weight=1)
 
@@ -222,6 +223,18 @@ class PicoPanel(ttk.LabelFrame):
         plotf = ttk.LabelFrame(self, text="〰 Waveform", padding=6)
         plotf.grid(row=row, column=0, columnspan=4, sticky="nsew", pady=6)
         self.plot_frame = plotf
+
+        wavebar = ttk.Frame(plotf)
+        wavebar.pack(fill="x", pady=(0, 4))
+        ttk.Checkbutton(
+            wavebar,
+            text="Fixed Y",
+            variable=self.var_waveform_fixed_y,
+            command=self.apply_waveform_y_limits,
+        ).pack(side="left")
+        ttk.Label(wavebar, text="Y max (V)").pack(side="left", padx=(8, 3))
+        ttk.Entry(wavebar, textvariable=self.var_waveform_y_max, width=8).pack(side="left")
+        ttk.Button(wavebar, text="Apply", command=self.apply_waveform_y_limits).pack(side="left", padx=(4, 0))
 
         for c in range(4):
             self.columnconfigure(c, weight=1)
@@ -249,6 +262,7 @@ class PicoPanel(ttk.LabelFrame):
         self.canvas = FigureCanvasTkAgg(self.fig, master=self.plot_frame)
         widget = self.canvas.get_tk_widget()
         widget.pack(fill="both", expand=True)
+        self.canvas.mpl_connect("scroll_event", self._on_waveform_scroll)
 
         self._reset_plot()
 
@@ -272,6 +286,51 @@ class PicoPanel(ttk.LabelFrame):
                 fontsize=10
             )
 
+        self._apply_waveform_y_limits_to_axes(draw=False)
+        self.canvas.draw_idle()
+
+    def _get_fixed_y_max(self):
+        text = self.var_waveform_y_max.get().strip()
+        if not text:
+            return None
+        value = float(text)
+        if value <= 0:
+            raise ValueError("Y max must be > 0")
+        return value
+
+    def _apply_waveform_y_limits_to_axes(self, draw=True):
+        if not self.var_waveform_fixed_y.get():
+            return
+        y_max = self._get_fixed_y_max()
+        if y_max is None:
+            return
+        for ax in (self.ax_trigger, self.ax_capture):
+            ax.set_ylim(-y_max, y_max)
+        if draw:
+            self.canvas.draw_idle()
+
+    def apply_waveform_y_limits(self):
+        try:
+            if self.var_waveform_fixed_y.get():
+                self._apply_waveform_y_limits_to_axes(draw=True)
+            else:
+                for ax in (self.ax_trigger, self.ax_capture):
+                    ax.relim()
+                    ax.autoscale_view()
+                self.canvas.draw_idle()
+        except Exception as e:
+            self.log(f"[PICO] Waveform Y scale failed: {e}")
+            messagebox.showerror("Waveform Y Scale", str(e))
+
+    def _on_waveform_scroll(self, event):
+        ax = event.inaxes
+        if ax not in (self.ax_trigger, self.ax_capture):
+            return
+        y0, y1 = ax.get_ylim()
+        center = event.ydata if event.ydata is not None else 0.5 * (y0 + y1)
+        scale = 0.8 if event.button == "up" else 1.25
+        new_half = max(abs(y1 - y0) * 0.5 * scale, 1e-12)
+        ax.set_ylim(center - new_half, center + new_half)
         self.canvas.draw_idle()
 
     def _get_display_channels(self, result_meta, signals_v):
@@ -383,6 +442,7 @@ class PicoPanel(ttk.LabelFrame):
             top=0.90,
             wspace=0.22,
         )
+        self._apply_waveform_y_limits_to_axes(draw=False)
         self.canvas.draw_idle()
         return
 
@@ -574,6 +634,12 @@ class PicoPanel(ttk.LabelFrame):
             save_dir = self.var_save_dir.get().strip()
             if save_dir:
                 self.ctx.pico.set_save_dir(save_dir)
+            else:
+                clear_func = getattr(self.ctx.pico, "clear_save_dir", None)
+                if callable(clear_func):
+                    clear_func()
+                else:
+                    self.ctx.pico.save_dir = None
 
         except Exception as e:
             self.log(f"[PICO] Apply config failed: {e}")
@@ -595,6 +661,21 @@ class PicoPanel(ttk.LabelFrame):
         except Exception as e:
             self.log(f"[PICO] Failed to set save folder: {e}")
             messagebox.showerror("PicoScope Error", str(e))
+
+    def on_clear_save_dir(self):
+        self.var_save_dir.set("")
+        try:
+            if self.ctx.pico is not None:
+                clear_func = getattr(self.ctx.pico, "clear_save_dir", None)
+                if callable(clear_func):
+                    clear_func()
+                else:
+                    self.ctx.pico.save_dir = None
+            self.log("[PICO] Save folder cleared")
+        except Exception as e:
+            self.log(f"[PICO] Failed to clear save folder: {e}")
+            messagebox.showerror("PicoScope Error", str(e))
+        self._refresh_status()
 
     # ------------------------------------------------------------------
     # capture in background thread
