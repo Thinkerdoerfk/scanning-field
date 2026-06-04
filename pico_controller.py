@@ -37,7 +37,7 @@ class PicoController:
     Generic PicoScope controller for block capture.
 
     Current stable strategy:
-    - selectable 8-bit / 12-bit mode
+    - selectable 8-bit / 12-bit / 15-bit mode
     - trigger source can be A/B/C/D
     - capture channels can be one or more of A/B/C/D
     - avoid is_ready() loop
@@ -177,9 +177,10 @@ class PicoController:
         mapping = {
             8: psdk.RESOLUTION.BIT_8,
             12: psdk.RESOLUTION.BIT_12,
+            15: psdk.RESOLUTION.BIT_15,
         }
         if resolution_bits not in mapping:
-            raise ValueError("Only 8-bit and 12-bit are supported in this GUI")
+            raise ValueError("Only 8-bit, 12-bit, and 15-bit are supported in this GUI")
         return mapping[resolution_bits]
 
     def _set_resolution_bits(self, resolution_bits: int):
@@ -278,8 +279,10 @@ class PicoController:
             table = {1: 1000.0, 2: 500.0, 3: 250.0, 4: 250.0}
         elif resolution_bits == 12:
             table = {1: 500.0, 2: 250.0, 3: 125.0, 4: 125.0}
+        elif resolution_bits == 15:
+            table = {1: 125.0, 2: 125.0, 3: 62.5, 4: 62.5}
         else:
-            raise ValueError("Only 8-bit and 12-bit are supported in this GUI")
+            raise ValueError("Only 8-bit, 12-bit, and 15-bit are supported in this GUI")
 
         return table.get(enabled_channel_count, table[4])
 

@@ -33,10 +33,12 @@ class RealtimePostprocessPanel(ttk.LabelFrame):
         self.var_input_folder = tk.StringVar(value="")
         self.var_output_folder = tk.StringVar(value="")
         self.var_channel = tk.StringVar(value="D")
+        self.var_scan_mode = tk.StringVar(value="Sweep frequency")
         self.var_freq_count = tk.StringVar(value="21")
         self.var_freq_start_mhz = tk.StringVar(value="2.0")
         self.var_freq_stop_mhz = tk.StringVar(value="2.1")
         self.var_freq_step_khz = tk.StringVar(value="5")
+        self.var_voltage_list_vpp = tk.StringVar(value="0.1")
         self.var_sens = tk.StringVar(value="0.05")
         self.var_gate_t1_us = tk.StringVar(value="400")
         self.var_gate_t2_us = tk.StringVar(value="500")
@@ -63,6 +65,14 @@ class RealtimePostprocessPanel(ttk.LabelFrame):
         rowf.grid(row=r, column=0, columnspan=3, sticky="ew", pady=(4, 0))
         ttk.Label(rowf, text="Ch").pack(side="left")
         ttk.Entry(rowf, textvariable=self.var_channel, width=4).pack(side="left", padx=(3, 8))
+        ttk.Label(rowf, text="Mode").pack(side="left")
+        ttk.Combobox(
+            rowf,
+            textvariable=self.var_scan_mode,
+            values=["Sweep frequency", "Sweep voltage"],
+            width=16,
+            state="readonly",
+        ).pack(side="left", padx=(3, 8))
         ttk.Label(rowf, text="Count").pack(side="left")
         ttk.Entry(rowf, textvariable=self.var_freq_count, width=5).pack(side="left", padx=(3, 8))
         ttk.Label(rowf, text="MHz").pack(side="left")
@@ -71,6 +81,15 @@ class RealtimePostprocessPanel(ttk.LabelFrame):
         ttk.Entry(rowf, textvariable=self.var_freq_stop_mhz, width=6).pack(side="left", padx=(3, 8))
         ttk.Label(rowf, text="kHz").pack(side="left")
         ttk.Entry(rowf, textvariable=self.var_freq_step_khz, width=5).pack(side="left", padx=(3, 0))
+
+        r += 1
+        rowf = ttk.Frame(self)
+        rowf.grid(row=r, column=0, columnspan=3, sticky="ew", pady=(4, 0))
+        ttk.Label(rowf, text="Sweep voltage").pack(side="left")
+        ttk.Label(rowf, text="Fixed MHz").pack(side="left", padx=(8, 3))
+        ttk.Entry(rowf, textvariable=self.var_freq_start_mhz, width=6).pack(side="left")
+        ttk.Label(rowf, text="Vpp list").pack(side="left", padx=(8, 3))
+        ttk.Entry(rowf, textvariable=self.var_voltage_list_vpp, width=28).pack(side="left", fill="x", expand=True)
 
         r += 1
         rowf = ttk.Frame(self)
@@ -101,7 +120,7 @@ class RealtimePostprocessPanel(ttk.LabelFrame):
             width=9,
             state="readonly",
         ).pack(side="left", padx=(3, 8))
-        ttk.Label(rowf, text="Freq #").pack(side="left")
+        ttk.Label(rowf, text="Map #").pack(side="left")
         ttk.Entry(rowf, textvariable=self.var_freq_index, width=5).pack(side="left", padx=(3, 8))
         ttk.Button(rowf, text="Update", command=self.update_plot).pack(side="left")
 
@@ -129,6 +148,21 @@ class RealtimePostprocessPanel(ttk.LabelFrame):
         if not text:
             return None
         return float(text) * 1e-6
+
+    def _parse_voltage_list_vpp(self):
+        text = self.var_voltage_list_vpp.get().strip()
+        if not text:
+            raise RuntimeError("Vpp list is empty.")
+        parts = [part.strip() for part in text.replace(";", ",").split(",") if part.strip()]
+        try:
+            values = np.asarray([float(part) for part in parts], dtype=float)
+        except Exception:
+            raise RuntimeError("Invalid Vpp list. Use values like 0.5,0.52,0.54")
+        if len(values) == 0:
+            raise RuntimeError("Vpp list is empty.")
+        if np.any(values <= 0):
+            raise RuntimeError("All Vpp values must be positive.")
+        return values
 
     def use_current_save_folder(self):
         try:
@@ -162,16 +196,32 @@ class RealtimePostprocessPanel(ttk.LabelFrame):
         if not output_folder:
             raise RuntimeError("Output folder is empty.")
         os.makedirs(output_folder, exist_ok=True)
-        output_path = os.path.join(output_folder, f"realtime_multifrequency_fft_{channel}.npz")
+        scan_mode = self.var_scan_mode.get().strip()
+        voltage_mode = scan_mode == "Sweep voltage"
+        output_stem = "realtime_voltage_sweep_fft" if voltage_mode else "realtime_multifrequency_fft"
+        output_path = os.path.join(output_folder, f"{output_stem}_{channel}.npz")
         self.current_npz_path = output_path
+        freq_start_mhz = float(self.var_freq_start_mhz.get())
+        if voltage_mode:
+            amplitudes_vpp = self._parse_voltage_list_vpp()
+            freq_count = int(len(amplitudes_vpp))
+            freq_stop_mhz = freq_start_mhz
+            freq_step_khz = 1.0
+        else:
+            amplitudes_vpp = None
+            freq_count = int(self.var_freq_count.get())
+            freq_stop_mhz = float(self.var_freq_stop_mhz.get())
+            freq_step_khz = float(self.var_freq_step_khz.get())
         return {
             "input_folder": input_folder,
             "output_path": output_path,
             "channel_name": channel,
-            "freq_count": int(self.var_freq_count.get()),
-            "freq_start_mhz": float(self.var_freq_start_mhz.get()),
-            "freq_stop_mhz": float(self.var_freq_stop_mhz.get()),
-            "freq_step_khz": float(self.var_freq_step_khz.get()),
+            "scan_mode": "voltage_sweep" if voltage_mode else "frequency_sweep",
+            "freq_count": freq_count,
+            "freq_start_mhz": freq_start_mhz,
+            "freq_stop_mhz": freq_stop_mhz,
+            "freq_step_khz": freq_step_khz,
+            "excitation_amplitudes_vpp": amplitudes_vpp,
             "sens_v_per_mpa": float(self.var_sens.get()),
             "gate_t1": self._float_or_none_us(self.var_gate_t1_us.get()),
             "gate_t2": self._float_or_none_us(self.var_gate_t2_us.get()),
@@ -272,7 +322,13 @@ class RealtimePostprocessPanel(ttk.LabelFrame):
 
         field_map = maps[idx]
         freqs_mhz = np.asarray(self.current_data.get("excitation_frequencies_mhz", []), dtype=float).reshape(-1)
-        freq_label = f"{freqs_mhz[idx]:.3f} MHz" if idx < len(freqs_mhz) else f"#{idx + 1}"
+        amplitudes_vpp = np.asarray(self.current_data.get("excitation_amplitudes_vpp", []), dtype=float).reshape(-1)
+        scan_mode = str(np.asarray(self.current_data.get("scan_mode", "frequency_sweep")).reshape(-1)[0])
+        if scan_mode == "voltage_sweep" and idx < len(amplitudes_vpp):
+            base_freq = f"{freqs_mhz[idx]:.3f} MHz, " if idx < len(freqs_mhz) else ""
+            freq_label = f"{base_freq}{amplitudes_vpp[idx]:.6g} Vpp"
+        else:
+            freq_label = f"{freqs_mhz[idx]:.3f} MHz" if idx < len(freqs_mhz) else f"#{idx + 1}"
         x_unique = np.asarray(self.current_data.get("x_unique", []), dtype=float).reshape(-1)
         y_unique = np.asarray(self.current_data.get("y_unique", []), dtype=float).reshape(-1)
         extent = None
@@ -326,6 +382,8 @@ class RealtimePostprocessPanel(ttk.LabelFrame):
             return
 
         freqs_mhz = np.asarray(self.current_data.get("excitation_frequencies_mhz", []), dtype=float).reshape(-1)
+        amplitudes_vpp = np.asarray(self.current_data.get("excitation_amplitudes_vpp", []), dtype=float).reshape(-1)
+        scan_mode = str(np.asarray(self.current_data.get("scan_mode", "frequency_sweep")).reshape(-1)[0])
         x_unique = np.asarray(self.current_data.get("x_unique", []), dtype=float).reshape(-1)
         y_unique = np.asarray(self.current_data.get("y_unique", []), dtype=float).reshape(-1)
         extent = None
@@ -373,7 +431,10 @@ class RealtimePostprocessPanel(ttk.LabelFrame):
                     vmax=vmax,
                 )
 
-            title = f"{freqs_mhz[i]:.3f} MHz" if i < len(freqs_mhz) else f"#{i + 1}"
+            if scan_mode == "voltage_sweep" and i < len(amplitudes_vpp):
+                title = f"{amplitudes_vpp[i]:.6g} Vpp"
+            else:
+                title = f"{freqs_mhz[i]:.3f} MHz" if i < len(freqs_mhz) else f"#{i + 1}"
             ax.set_title(title, fontsize=7)
             ax.set_xticks([])
             ax.set_yticks([])
@@ -387,7 +448,8 @@ class RealtimePostprocessPanel(ttk.LabelFrame):
                 label = "Pressure amplitude (MPa)"
             self.fig.colorbar(last_image, ax=axes.ravel().tolist(), fraction=0.025, pad=0.01).set_label(label)
 
-        self.fig.suptitle(f"{field.title()} Maps: All Frequencies", fontsize=10)
+        title_suffix = "All Voltages" if scan_mode == "voltage_sweep" else "All Frequencies"
+        self.fig.suptitle(f"{field.title()} Maps: {title_suffix}", fontsize=10)
         self.canvas.draw_idle()
 
     def destroy(self):

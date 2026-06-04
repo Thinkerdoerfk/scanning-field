@@ -310,6 +310,19 @@ class ScanPanel:
             self.frequency_sweep_frame.grid()
 
     def _build_voltage_list_vpp(self):
+        voltage_text = self.voltage_start_vpp_var.get().strip()
+        if "," in voltage_text:
+            items = [item.strip() for item in voltage_text.split(",") if item.strip()]
+            if not items:
+                raise ValueError("Voltage list is empty.")
+            try:
+                voltages = np.asarray([float(item) for item in items], dtype=float)
+            except Exception:
+                raise ValueError("Invalid voltage list. Use values like 0.5,0.52,0.54")
+            if np.any(voltages <= 0):
+                raise ValueError("All voltage values must be positive.")
+            return voltages
+
         voltage_start = self._get_float(self.voltage_start_vpp_var, "Voltage Start Vpp")
         voltage_stop = self._get_float(self.voltage_stop_vpp_var, "Voltage Stop Vpp")
         voltage_step = self._get_float(self.voltage_step_vpp_var, "Voltage Step Vpp")

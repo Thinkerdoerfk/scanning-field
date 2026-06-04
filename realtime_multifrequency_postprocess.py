@@ -207,6 +207,9 @@ def _save_output(output_path, config, rows, maps, frequencies_hz):
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     if maps is None:
         return
+    amplitudes_vpp = config.get("excitation_amplitudes_vpp")
+    if amplitudes_vpp is None:
+        amplitudes_vpp = []
 
     rows_dtype = [
         ("file_name", "U260"),
@@ -216,6 +219,7 @@ def _save_output(output_path, config, rows, maps, frequencies_hz):
         ("frequency_index", "i4"),
         ("excitation_frequency_Hz", "f8"),
         ("excitation_frequency_MHz", "f8"),
+        ("excitation_amplitude_Vpp", "f8"),
         ("voltage_amp_V", "f8"),
         ("pressure_amp_MPa", "f8"),
         ("phase_rad", "f8"),
@@ -230,9 +234,11 @@ def _save_output(output_path, config, rows, maps, frequencies_hz):
     np.savez(
         output_path,
         channel_name=np.array(config["channel_name"]),
+        scan_mode=np.array(str(config.get("scan_mode", "frequency_sweep"))),
         frequency_count=np.array(len(frequencies_hz), dtype=np.int32),
         excitation_frequencies_hz=np.asarray(frequencies_hz, dtype=np.float64),
         excitation_frequencies_mhz=np.asarray(frequencies_hz, dtype=np.float64) / 1e6,
+        excitation_amplitudes_vpp=np.asarray(amplitudes_vpp, dtype=np.float64),
         sens_v_per_mpa=np.array(config["sens_v_per_mpa"], dtype=np.float32),
         gate_t1=np.array(np.nan if config["gate_t1"] is None else config["gate_t1"], dtype=np.float32),
         gate_t2=np.array(np.nan if config["gate_t2"] is None else config["gate_t2"], dtype=np.float32),
@@ -263,6 +269,12 @@ def run_realtime_multifrequency_postprocess(config, status_queue, stop_event):
         freq_step_khz=float(config["freq_step_khz"]),
     )
     freq_count = int(len(configured_frequencies_hz))
+    configured_amplitudes = config.get("excitation_amplitudes_vpp")
+    if configured_amplitudes is None:
+        configured_amplitudes = []
+    configured_amplitudes_vpp = np.asarray(configured_amplitudes, dtype=float).reshape(-1)
+    if len(configured_amplitudes_vpp) not in (0, freq_count):
+        raise ValueError("excitation_amplitudes_vpp length must match freq_count")
 
     rows = []
     processed_files = set()
@@ -314,6 +326,11 @@ def run_realtime_multifrequency_postprocess(config, status_queue, stop_event):
                 y_mm = _get_scalar(data, "y_mm", np.nan)
 
                 for freq_index, (target_freq_hz, sig) in enumerate(zip(file_frequencies_hz, sig_blocks), 1):
+                    amplitude_vpp = (
+                        float(configured_amplitudes_vpp[freq_index - 1])
+                        if len(configured_amplitudes_vpp) == freq_count
+                        else np.nan
+                    )
                     complex_amp, freq_found_hz, fft_index = _fft_complex_amp_at_target_freq(
                         sig,
                         t_proc,
@@ -330,6 +347,7 @@ def run_realtime_multifrequency_postprocess(config, status_queue, stop_event):
                             "frequency_index": int(freq_index),
                             "excitation_frequency_Hz": float(target_freq_hz),
                             "excitation_frequency_MHz": float(target_freq_hz / 1e6),
+                            "excitation_amplitude_Vpp": amplitude_vpp,
                             "voltage_amp_V": voltage_amp_v,
                             "pressure_amp_MPa": _voltage_amp_to_pressure_amp_mpa(
                                 voltage_amp_v,

@@ -157,7 +157,7 @@ class PicoPanel(ttk.LabelFrame):
         ttk.Combobox(
             cfg,
             textvariable=self.var_resolution_bits,
-            values=["8", "12"],
+            values=["8", "12", "15"],
             width=15,
             state="readonly",
         ).grid(row=r, column=3, sticky="ew", padx=4)
