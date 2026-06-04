@@ -174,7 +174,7 @@ class ScanController:
                 return
             amplitude_vpp = None if amplitudes_vpp is None else float(amplitudes_vpp[freq_index - 1])
 
-            if total_points:
+            if total_points and (freq_index == 1 or freq_index == len(frequencies_hz)):
                 self._publish_running_progress(
                     current_x=x_mm,
                     current_y=y_mm,
@@ -370,11 +370,19 @@ class ScanController:
                 f"Y: {y_start} -> {y_stop} step {y_step}, "
                 f"dwell={dwell_s} s, excitation/point={len(frequencies_hz)}, mode={scan_mode}"
             )
-            self.log(f"X points: {xs}")
-            self.log(f"Y points: {ys}")
-            self.log(f"Frequencies (MHz): {frequencies_hz / 1e6}")
+            self.log(
+                f"X points: {len(xs)} ({xs[0]:.6g} -> {xs[-1]:.6g}); "
+                f"Y points: {len(ys)} ({ys[0]:.6g} -> {ys[-1]:.6g})"
+            )
+            self.log(
+                f"Frequencies (MHz): count={len(frequencies_hz)}, "
+                f"first={frequencies_hz[0] / 1e6:.6g}, last={frequencies_hz[-1] / 1e6:.6g}"
+            )
             if amplitudes_vpp is not None:
-                self.log(f"Amplitudes (Vpp): {amplitudes_vpp}")
+                self.log(
+                    f"Amplitudes (Vpp): count={len(amplitudes_vpp)}, "
+                    f"first={amplitudes_vpp[0]:.6g}, last={amplitudes_vpp[-1]:.6g}"
+                )
 
             current_x = float(x_start)
             current_y = float(y_start)
@@ -433,7 +441,9 @@ class ScanController:
                         frequency_count=len(frequencies_hz),
                         message=f"Point {point_index}/{total_points}",
                     )
-                    self.log(f"[SCAN] === Point: x={current_x:.3f} mm, y={current_y:.3f} mm ===")
+                    log_point_detail = verbose and (i == 0 or i == len(xs) - 1)
+                    if log_point_detail:
+                        self.log(f"[SCAN] === Point: x={current_x:.3f} mm, y={current_y:.3f} mm ===")
                     self.trigger_here(
                         point_index=point_index,
                         x_mm=current_x,
@@ -444,7 +454,7 @@ class ScanController:
                         scan_mode=scan_mode,
                         completed_points_before=completed_points,
                         total_points=total_points,
-                        verbose=verbose,
+                        verbose=log_point_detail,
                     )
                     if self._stop_requested:
                         self._publish_progress(status="stopped", message="Stopped by user")

@@ -744,7 +744,7 @@ class PicoController:
             if y_mm is not None:
                 payload["y_mm"] = float(y_mm)
 
-            np.savez_compressed(path, **payload)
+            np.savez(path, **payload)
             saved_paths[ch] = path
 
         if not saved_paths:
