@@ -14,6 +14,7 @@ class ScanPanel:
         self.log = log_func
 
         self.scan_controller = None
+        self._test_burst_running = False
         #self.scan_thread = None
         #self.test_scan_thread = None
 
@@ -241,6 +242,9 @@ class ScanPanel:
         self.preview_canvas.grid(row=2, column=0, sticky="ew")
 
         row += 2
+        ttk.Button(self.frame, text="▶ Test Burst", command=self.test_burst_from_scan_settings).grid(
+            row=row, column=1, padx=4, pady=5, sticky="ew"
+        )
         ttk.Button(self.frame, text="▶ Start Scan", command=self.start_scan).grid(row=row, column=2, padx=4, pady=5,
                                                                                 sticky="ew")
         ttk.Button(self.frame, text="■ Stop Scan", command=self.stop_scan).grid(row=row, column=3, padx=4, pady=5,
@@ -1012,6 +1016,60 @@ class ScanPanel:
                 messagebox.showerror("Test Error", str(e))
             except Exception:
                 pass
+
+    def test_burst_from_scan_settings(self):
+        if self._test_burst_running:
+            self.log("[SCAN] Test burst is already running.")
+            return
+        if self.scan_controller is not None and self.scan_controller.is_running:
+            messagebox.showerror("Test Burst", "Cannot test burst while scan is running.")
+            return
+
+        try:
+            if self.ctx.afg is None or not getattr(self.ctx, "afg_connected", False):
+                raise RuntimeError("AFG is not connected.")
+            scan_mode, frequencies_hz, amplitudes_vpp = self._build_excitation_lists()
+        except Exception as e:
+            self.log(f"[SCAN] Test burst setup failed: {e}")
+            messagebox.showerror("Test Burst", str(e))
+            return
+
+        self._test_burst_running = True
+        thread = threading.Thread(
+            target=self._test_burst_worker,
+            args=(scan_mode, frequencies_hz, amplitudes_vpp),
+            daemon=True,
+        )
+        thread.start()
+
+    def _test_burst_worker(self, scan_mode, frequencies_hz, amplitudes_vpp):
+        try:
+            afg = self.ctx.afg
+            count = len(frequencies_hz)
+            self.log(f"[SCAN] Test burst started: mode={scan_mode}, excitation/point={count}")
+            for idx, frequency_hz in enumerate(frequencies_hz, start=1):
+                amplitude_vpp = None if amplitudes_vpp is None else float(amplitudes_vpp[idx - 1])
+                afg.set_frequency(float(frequency_hz))
+                if amplitude_vpp is not None:
+                    afg.set_amplitude_vpp(amplitude_vpp)
+                afg.fire_software_trigger_once()
+
+                amp_text = "" if amplitude_vpp is None else f", {amplitude_vpp:.6g} Vpp"
+                if idx == 1 or idx == count:
+                    self.log(
+                        f"[SCAN] Test burst {idx}/{count}: "
+                        f"{float(frequency_hz) / 1e6:.6f} MHz{amp_text}"
+                    )
+
+            self.log("[SCAN] Test burst finished.")
+        except Exception as e:
+            self.log(f"[SCAN] Test burst failed: {e}")
+            try:
+                self.frame.after(0, lambda err=e: messagebox.showerror("Test Burst", str(err)))
+            except Exception:
+                pass
+        finally:
+            self._test_burst_running = False
 
     # Do the scan
     def start_scan(self):
