@@ -1,3 +1,5 @@
+import json
+import os
 import tkinter as tk
 from tkinter import ttk, messagebox
 
@@ -11,10 +13,31 @@ from gui_realtime_postprocess_panel import RealtimePostprocessPanel
 
 
 class MainGUIApp:
+    SETTINGS_VERSION = 1
+    TRANSIENT_VAR_NAMES = {
+        "var_status",
+        "var_idn",
+        "status_var",
+        "pos1_var",
+        "pos2_var",
+        "distance_result_var",
+        "power_result_var",
+        "monitor_status_var",
+        "monitor_point_var",
+        "monitor_position_var",
+        "monitor_frequency_var",
+        "monitor_eta_var",
+        "monitor_elapsed_var",
+        "monitor_progress_var",
+        "readiness_var",
+        "var_processed",
+    }
+
     def __init__(self, root):
         self.root = root
         self.root.title("Scanning Field Control Panel")
         self._configure_theme()
+        self.settings_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gui_settings.json")
 
         screen_w = self.root.winfo_screenwidth()
         screen_h = self.root.winfo_screenheight()
@@ -109,6 +132,7 @@ class MainGUIApp:
         self.ctx.scan_panel = self.scan_panel
         self.ctx.pico_panel = self.pico_panel
         self.ctx.realtime_postprocess_panel = self.realtime_postprocess_panel
+        self.load_panel_settings()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.root.after_idle(self._sync_paned_height)
 
@@ -267,6 +291,97 @@ class MainGUIApp:
         )
         style.configure("TRadiobutton", background=self.colors["app_bg"], foreground=self.colors["text"])
 
+    def _settings_panels(self):
+        return {
+            "afg": getattr(self, "afg_panel", None),
+            "stage": getattr(self, "stage_panel", None),
+            "scan": getattr(self, "scan_panel", None),
+            "pico": getattr(self, "pico_panel", None),
+            "realtime_postprocess": getattr(self, "realtime_postprocess_panel", None),
+        }
+
+    def _iter_persistent_panel_vars(self, panel):
+        if panel is None:
+            return
+        for name, value in vars(panel).items():
+            if name in self.TRANSIENT_VAR_NAMES:
+                continue
+            if isinstance(value, tk.Variable):
+                yield name, value
+
+    def _refresh_loaded_settings_ui(self):
+        scan_panel = getattr(self, "scan_panel", None)
+        if scan_panel is not None and hasattr(scan_panel, "_refresh_scan_mode_ui"):
+            try:
+                scan_panel._refresh_scan_mode_ui()
+            except Exception:
+                pass
+
+        pico_panel = getattr(self, "pico_panel", None)
+        if pico_panel is not None and hasattr(pico_panel, "apply_waveform_y_limits"):
+            try:
+                pico_panel.apply_waveform_y_limits()
+            except Exception:
+                pass
+
+    def load_panel_settings(self):
+        if not os.path.exists(self.settings_path):
+            return
+        try:
+            with open(self.settings_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            self.log_panel.log(f"[GUI] Failed to load saved settings: {e}")
+            return
+
+        panels_data = data.get("panels", {})
+        for panel_name, panel in self._settings_panels().items():
+            saved_vars = panels_data.get(panel_name, {})
+            if not isinstance(saved_vars, dict):
+                continue
+            for var_name, saved_value in saved_vars.items():
+                var = getattr(panel, var_name, None)
+                if not isinstance(var, tk.Variable):
+                    continue
+                if var_name in self.TRANSIENT_VAR_NAMES:
+                    continue
+                try:
+                    var.set(saved_value)
+                except Exception:
+                    pass
+
+        self._refresh_loaded_settings_ui()
+        self.log_panel.log("[GUI] Loaded saved panel settings.")
+
+    def save_panel_settings(self):
+        panels_data = {}
+        for panel_name, panel in self._settings_panels().items():
+            saved_vars = {}
+            for var_name, var in self._iter_persistent_panel_vars(panel):
+                try:
+                    saved_vars[var_name] = var.get()
+                except Exception:
+                    pass
+            panels_data[panel_name] = saved_vars
+
+        data = {
+            "version": self.SETTINGS_VERSION,
+            "panels": panels_data,
+        }
+
+        tmp_path = f"{self.settings_path}.tmp"
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            os.replace(tmp_path, self.settings_path)
+        except Exception as e:
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
+            self.log_panel.log(f"[GUI] Failed to save panel settings: {e}")
+
     def on_close(self):
         scan_controller = getattr(getattr(self, "scan_panel", None), "scan_controller", None)
         scan_running = bool(scan_controller is not None and scan_controller.is_running)
@@ -279,6 +394,8 @@ class MainGUIApp:
                 return
 
         try:
+            self.save_panel_settings()
+
             if scan_running:
                 try:
                     scan_controller.stop()

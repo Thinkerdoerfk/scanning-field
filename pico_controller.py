@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import ctypes
 import os
 import time
 from dataclasses import dataclass
@@ -562,7 +563,21 @@ class PicoController:
 
         self._armed = True
 
-    def wait_and_fetch_current_capture(self, timeout_s: float = 5.0) -> PicoCaptureResult:
+    def stop_current_capture(self):
+        if self.scope is None:
+            self._armed = False
+            return
+        for method_name in ("stop", "stop_capture"):
+            method = getattr(self.scope, method_name, None)
+            if callable(method):
+                try:
+                    method()
+                except Exception:
+                    pass
+                break
+        self._armed = False
+
+    def wait_and_fetch_current_capture(self, timeout_s: float = 5.0, stop_requested=None) -> PicoCaptureResult:
         self._require_scope()
 
         if not self._configured:
@@ -583,8 +598,30 @@ class PicoController:
 
         t0 = time.time()
 
-        if sleep_s > 0:
-            time.sleep(sleep_s)
+        while sleep_s > 0:
+            if callable(stop_requested) and stop_requested():
+                self.stop_current_capture()
+                raise RuntimeError("Pico capture stopped by user")
+            chunk_s = min(0.01, sleep_s)
+            time.sleep(chunk_s)
+            sleep_s -= chunk_s
+
+        ready = ctypes.c_int16()
+        while True:
+            if callable(stop_requested) and stop_requested():
+                self.stop_current_capture()
+                raise RuntimeError("Pico capture stopped by user")
+            if time.time() - t0 > timeout_s:
+                self.stop_current_capture()
+                raise TimeoutError(f"Pico capture timeout after {timeout_s:.3f} s")
+            self.scope._call_attr_function(
+                "IsReady",
+                self.scope.handle,
+                ctypes.byref(ready),
+            )
+            if ready.value != 0:
+                break
+            time.sleep(0.002)
 
         self.scope.get_values(
             samples=int(self.samples),
@@ -595,6 +632,7 @@ class PicoController:
 
         fetch_elapsed = time.time() - t0
         if fetch_elapsed > timeout_s:
+            self.stop_current_capture()
             raise TimeoutError(f"Pico capture timeout after {fetch_elapsed:.3f} s")
 
         signals_v: Dict[str, np.ndarray] = {}

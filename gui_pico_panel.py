@@ -30,6 +30,7 @@ class PicoPanel(ttk.LabelFrame):
 
         self._capture_thread = None
         self._capture_running = False
+        self._capture_abort_requested = False
         self._last_capture_result = None
         self._last_seen_update_id = getattr(self.ctx, "last_pico_update_id", 0)
 
@@ -91,6 +92,15 @@ class PicoPanel(ttk.LabelFrame):
 
         row += 1
         cfg = ttk.LabelFrame(self, text="🛠 Configuration", padding=6)
+        self.abort_capture_button = ttk.Button(
+            self,
+            text="Abort Capture",
+            command=self.abort_capture_test,
+            state="disabled",
+        )
+        self.abort_capture_button.grid(row=row, column=3, sticky="ew", pady=(0, 4))
+
+        row += 1
         cfg.grid(row=row, column=0, columnspan=4, sticky="nsew", pady=6)
 
         r = 0
@@ -711,6 +721,8 @@ class PicoPanel(ttk.LabelFrame):
             messagebox.showerror("PicoScope Error", str(e))
             return
         self._capture_running = True
+        self._capture_abort_requested = False
+        self._set_capture_buttons_running(True)
         self.log("[PICO] Starting test capture in background thread...")
 
         self._capture_thread = threading.Thread(
@@ -720,13 +732,22 @@ class PicoPanel(ttk.LabelFrame):
         )
         self._capture_thread.start()
 
+    def abort_capture_test(self):
+        if not self._capture_running:
+            self.log("[PICO] No capture test is running.")
+            return
+        self._capture_abort_requested = True
+        self.log("[PICO] Capture abort requested.")
+
     def _capture_test_worker(self, save_dir, save_channels):
 
         try:
             self.ctx.pico.arm_current_capture()
-            self.log("[PICO] Armed. Waiting using sleep-based fetch workaround...")
+            self.log("[PICO] Armed. Waiting for trigger...")
 
-            result = self.ctx.pico.wait_and_fetch_current_capture()
+            result = self.ctx.pico.wait_and_fetch_current_capture(
+                stop_requested=lambda: self._capture_abort_requested
+            )
 
             save_paths = {}
             if save_dir:
@@ -739,7 +760,18 @@ class PicoPanel(ttk.LabelFrame):
             self.after(0, lambda: self._on_capture_test_success(result, save_paths))
 
         except Exception as e:
-            self.after(0, lambda err=e: self._on_capture_test_error(err))
+            if self._capture_abort_requested:
+                self.after(0, self._on_capture_test_aborted)
+            else:
+                self.after(0, lambda err=e: self._on_capture_test_error(err))
+
+    def _set_capture_buttons_running(self, running):
+        abort_button = getattr(self, "abort_capture_button", None)
+        if abort_button is not None:
+            try:
+                abort_button.configure(state="normal" if running else "disabled")
+            except Exception:
+                pass
 
     def _on_capture_test_success(self, result, save_paths):
         try:
@@ -775,6 +807,17 @@ class PicoPanel(ttk.LabelFrame):
                     self.log(f"[PICO] Saved channel {ch}: {path}")
         finally:
             self._capture_running = False
+            self._capture_abort_requested = False
+            self._set_capture_buttons_running(False)
+            self._refresh_status()
+
+    def _on_capture_test_aborted(self):
+        try:
+            self.log("[PICO] Capture test aborted.")
+        finally:
+            self._capture_running = False
+            self._capture_abort_requested = False
+            self._set_capture_buttons_running(False)
             self._refresh_status()
 
     def _on_capture_test_error(self, err):
@@ -783,6 +826,8 @@ class PicoPanel(ttk.LabelFrame):
             messagebox.showerror("PicoScope Error", str(err))
         finally:
             self._capture_running = False
+            self._capture_abort_requested = False
+            self._set_capture_buttons_running(False)
             self._refresh_status()
 
     # ------------------------------------------------------------------

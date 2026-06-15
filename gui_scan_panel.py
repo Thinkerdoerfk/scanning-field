@@ -1,5 +1,6 @@
 import os
 import threading
+import time
 import tkinter as tk
 from tkinter import ttk, messagebox
 import numpy as np
@@ -1047,11 +1048,17 @@ class ScanPanel:
             afg = self.ctx.afg
             count = len(frequencies_hz)
             self.log(f"[SCAN] Test burst started: mode={scan_mode}, excitation/point={count}")
+            is_voltage_sweep = amplitudes_vpp is not None and str(scan_mode) == "voltage_sweep"
+            amplitude_settle_s = 0.1
+            if is_voltage_sweep:
+                afg.set_frequency(float(frequencies_hz[0]))
             for idx, frequency_hz in enumerate(frequencies_hz, start=1):
                 amplitude_vpp = None if amplitudes_vpp is None else float(amplitudes_vpp[idx - 1])
-                afg.set_frequency(float(frequency_hz))
+                if not is_voltage_sweep:
+                    afg.set_frequency(float(frequency_hz))
                 if amplitude_vpp is not None:
                     afg.set_amplitude_vpp(amplitude_vpp)
+                    time.sleep(amplitude_settle_s)
                 afg.fire_software_trigger_once()
 
                 amp_text = "" if amplitude_vpp is None else f", {amplitude_vpp:.6g} Vpp"

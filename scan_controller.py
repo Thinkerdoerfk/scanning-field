@@ -4,6 +4,10 @@ import traceback
 import numpy as np
 
 
+class StopScanRequested(Exception):
+    pass
+
+
 class ScanController:
     """
     Stage + AFG scan controller using relative motion only.
@@ -51,6 +55,23 @@ class ScanController:
     def stop(self):
         self._stop_requested = True
         self.log("Scan stop requested.")
+        if self.stage is not None:
+            for axis in (1, 2):
+                try:
+                    self.stage.stop(axis)
+                except Exception:
+                    pass
+
+    def _raise_if_stop_requested(self):
+        if self._stop_requested:
+            raise StopScanRequested()
+
+    def _interruptible_sleep(self, seconds: float, step_s: float = 0.02):
+        end_t = time.monotonic() + max(0.0, float(seconds))
+        while time.monotonic() < end_t:
+            self._raise_if_stop_requested()
+            time.sleep(min(step_s, max(0.0, end_t - time.monotonic())))
+        self._raise_if_stop_requested()
 
     def _publish_progress(self, **updates):
         progress = dict(getattr(self.ctx, "scan_progress", {}) or {})
@@ -160,7 +181,7 @@ class ScanController:
 
         # Dwell is a point-settling delay, so apply it once before the frequency sweep.
         if dwell_s > 0:
-            time.sleep(dwell_s)
+            self._interruptible_sleep(dwell_s)
 
         results = []
         # Previous repeated-sampling mode, kept for future reuse:
@@ -168,10 +189,16 @@ class ScanController:
         #     pico.arm_current_capture()
         #     afg.fire_software_trigger_once()
         #     results.append(pico.wait_and_fetch_current_capture())
+        is_voltage_sweep = amplitudes_vpp is not None and str(scan_mode) == "voltage_sweep"
+        amplitude_settle_s = 0.1
+        if is_voltage_sweep:
+            # In voltage-sweep mode the frequency is fixed. Set it once, then
+            # give the AFG a short settling time after each amplitude change.
+            afg.set_frequency(float(frequencies_hz[0]))
+
         for freq_index, frequency_hz in enumerate(frequencies_hz, start=1):
             if self._stop_requested:
-                self.log("[SCAN] Scan stopped by user.")
-                return
+                raise StopScanRequested()
             amplitude_vpp = None if amplitudes_vpp is None else float(amplitudes_vpp[freq_index - 1])
 
             if total_points and (freq_index == 1 or freq_index == len(frequencies_hz)):
@@ -197,18 +224,27 @@ class ScanController:
                 )
 
             # 1. Set requested excitation while keeping burst settings unchanged.
-            afg.set_frequency(float(frequency_hz))
+            if not is_voltage_sweep:
+                afg.set_frequency(float(frequency_hz))
             if amplitude_vpp is not None:
                 afg.set_amplitude_vpp(amplitude_vpp)
+                self._interruptible_sleep(amplitude_settle_s)
 
             # 2. Pico enters waiting-for-trigger state
+            self._raise_if_stop_requested()
             pico.arm_current_capture()
 
             # 3. fire AFG
+            self._raise_if_stop_requested()
             afg.fire_software_trigger_once()
 
             # 4. wait and fetch waveform
-            results.append(pico.wait_and_fetch_current_capture())
+            try:
+                results.append(pico.wait_and_fetch_current_capture(stop_requested=lambda: self._stop_requested))
+            except RuntimeError as e:
+                if self._stop_requested:
+                    raise StopScanRequested() from e
+                raise
 
         result = self._combine_point_results(
             results,
@@ -292,18 +328,32 @@ class ScanController:
     def move_x_rel(self, dx_mm: float, verbose: bool = True):
         if abs(dx_mm) <= 1e-12:
             return
+        self._raise_if_stop_requested()
         if verbose:
             self.log(f"Move X relatively by {dx_mm:.3f} mm")
         self.stage.move_rel_mm(axis=1, mm=dx_mm)
-        self.stage.wait_until_stop()
+        self._wait_stage_until_stop_interruptible()
 
     def move_y_rel(self, dy_mm: float, verbose: bool = True):
         if abs(dy_mm) <= 1e-12:
             return
+        self._raise_if_stop_requested()
         if verbose:
             self.log(f"Move Y relatively by {dy_mm:.3f} mm")
         self.stage.move_rel_mm(axis=2, mm=dy_mm)
-        self.stage.wait_until_stop()
+        self._wait_stage_until_stop_interruptible()
+
+    def _wait_stage_until_stop_interruptible(self, poll_interval: float = 0.05, timeout: float = 60.0):
+        t0 = time.time()
+        last_status = None
+        while True:
+            self._raise_if_stop_requested()
+            last_status = self.stage.query_status()
+            if str(last_status).strip().endswith("R"):
+                return last_status
+            if time.time() - t0 > timeout:
+                raise TimeoutError(f"Timeout. Last status: {last_status}")
+            self._interruptible_sleep(poll_interval, step_s=min(0.02, poll_interval))
 
     # ============================================================
     # Main scan
@@ -525,6 +575,15 @@ class ScanController:
     def _thread_entry(self, **kwargs):
         try:
             self.raster_scan_return(**kwargs)
+        except StopScanRequested:
+            self.log("[SCAN] Scan stopped by user.")
+            try:
+                if self.afg is not None and hasattr(self.afg, "output_off"):
+                    self.afg.output_off()
+            except Exception:
+                pass
+            self._publish_progress(status="stopped", message="Stopped by user", eta_s=None)
+            self._is_running = False
         except Exception as e:
             self.log(f"[SCAN] Scan crashed: {e}")
             self.log(traceback.format_exc())
