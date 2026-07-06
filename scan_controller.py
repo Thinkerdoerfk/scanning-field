@@ -190,7 +190,7 @@ class ScanController:
         #     afg.fire_software_trigger_once()
         #     results.append(pico.wait_and_fetch_current_capture())
         is_voltage_sweep = amplitudes_vpp is not None and str(scan_mode) == "voltage_sweep"
-        amplitude_settle_s = 0.1
+        amplitude_settle_s = 0.2
         if is_voltage_sweep:
             # In voltage-sweep mode the frequency is fixed. Set it once, then
             # give the AFG a short settling time after each amplitude change.
